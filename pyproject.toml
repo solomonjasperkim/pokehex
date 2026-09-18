@@ -7,6 +7,9 @@ readme = "README.md"
 license = { text = "MIT" }
 dependencies = []
 
+[project.scripts]
+pokehex-gui = "pokehex.gui:main"
+
 [project.optional-dependencies]
 dev = ["pytest>=8.0"]
 
