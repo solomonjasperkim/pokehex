@@ -1,0 +1,18 @@
+[project]
+name = "pokehex"
+version = "0.0.1"
+description = "A Python-native Pokemon data toolkit, aimed at Pokemon Legends Z-A"
+requires-python = ">=3.11"
+readme = "README.md"
+license = { text = "MIT" }
+dependencies = []
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0"]
+
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
