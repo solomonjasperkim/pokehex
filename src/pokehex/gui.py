@@ -14,7 +14,7 @@ from tkinter import filedialog, messagebox, ttk
 from typing import Callable
 
 from . import sprites, theme
-from .za import base_stats, moves as moves_mod, species
+from .za import abilities as abilities_mod, base_stats, moves as moves_mod, species
 from .za import stats as stats_mod
 from .za.pa9 import PA9
 from .za.save import BOX_COUNT, SLOTS_PER_BOX, SAV9ZA
@@ -54,8 +54,9 @@ def _len_check(n: int) -> Validator:
 
 
 # (key, label, is_string, validator). Fields marked "range-only" below have
-# no ported legality data (we don't have ability/ball/item tables) -- they
-# only confirm "well-formed non-negative number," not true legality.
+# no ported legality data (we don't have ball/item tables) -- they only
+# confirm "well-formed non-negative number," not true legality. Ability is
+# handled separately by AbilityPicker, which does have real per-species data.
 IDENTITY_FIELDS: list[tuple[str, str, bool, Validator | None]] = [
     ("form", "Form", False, _nonneg_check),
     ("level", "Level (1-100)", False, _range_check(1, 100)),
@@ -64,8 +65,6 @@ IDENTITY_FIELDS: list[tuple[str, str, bool, Validator | None]] = [
     ("tid16", "TID (0-65535)", False, _range_check(0, 65535)),
     ("sid16", "SID (0-65535)", False, _range_check(0, 65535)),
     ("nature", "Nature (0-24)", False, _range_check(0, 24)),
-    ("ability", "Ability id (range-only)", False, _nonneg_check),
-    ("ability_number", "Ability Slot (0/1/2/4)", False, _set_check({0, 1, 2, 4})),
     ("gender", "Gender (0=M 1=F 2=N)", False, _set_check({0, 1, 2})),
     ("ball", "Ball id (range-only)", False, _nonneg_check),
     ("held_item", "Held Item id (range-only)", False, _nonneg_check),
@@ -78,6 +77,7 @@ STAT_LABELS = [("HP", 0), ("Atk", 1), ("Def", 2), ("SpA", 3), ("SpD", 4), ("Spe"
 EV_MAX_TOTAL = 510
 
 SPECIES_SORT_MODES = [("dex", "Dex #"), ("alpha", "A-Z"), ("fillin", "Fill-in Order")]
+MAX_LIST_RESULTS = 300
 
 
 def _get_int(var: tk.StringVar, default: int = 0) -> int:
@@ -85,58 +85,101 @@ def _get_int(var: tk.StringVar, default: int = 0) -> int:
     return default if not text else int(text)
 
 
-class SearchablePicker(ttk.Frame):
-    """A type-to-filter Combobox over a set of '### Name' options."""
+class SearchableList(ttk.Frame):
+    """A search box with an always-visible, live-filtered results list below
+    it -- click or arrow-down-then-Enter to pick. Avoids ttk.Combobox's
+    popdown, which is slow/fiddly to use on macOS."""
 
-    def __init__(self, parent: tk.Widget, options: list[str], width: int = 22, on_change: Callable[[], None] | None = None) -> None:
+    def __init__(
+        self, parent: tk.Widget, options: list[str], width: int = 26,
+        list_height: int = 6, on_change: Callable[[], None] | None = None,
+    ) -> None:
         super().__init__(parent)
         self.all_options = options
         self.on_change = on_change
         self.var = tk.StringVar()
-        self.combo = ttk.Combobox(self, textvariable=self.var, values=self.all_options, width=width, style="Invalid.TCombobox")
-        self.combo.pack()
-        self.combo.bind("<KeyRelease>", self._on_keyrelease)
-        self.var.trace_add("write", self._on_write)
 
-    def set_options(self, options: list[str]) -> None:
-        self.all_options = options
-        self.combo["values"] = self.all_options
+        self.entry = ttk.Entry(self, textvariable=self.var, width=width, style="Valid.TEntry")
+        self.entry.grid(row=0, column=0, sticky="ew")
+        self.listbox = tk.Listbox(
+            self, height=list_height, width=width, font=theme.FONT_MONO,
+            bg=theme.PANEL_ALT, fg=theme.FG, selectbackground=theme.ACCENT_DIM,
+            selectforeground=theme.BG, highlightthickness=2, highlightbackground=theme.BORDER,
+            relief="sunken", borderwidth=2, exportselection=False,
+        )
+        self.listbox.grid(row=1, column=0, sticky="ew")
 
-    def _on_keyrelease(self, event: tk.Event) -> None:
-        if event.keysym in ("Up", "Down", "Return", "Escape", "Tab"):
+        self._refresh_list(options)
+        self.entry.bind("<KeyRelease>", self._on_key)
+        self.entry.bind("<Down>", self._move_to_list)
+        self.entry.bind("<Return>", self._select_first)
+        self.listbox.bind("<<ListboxSelect>>", self._on_listbox_select)
+        self.listbox.bind("<Return>", self._on_listbox_select)
+
+    def _refresh_list(self, options: list[str]) -> None:
+        self.listbox.delete(0, "end")
+        for option in options[:MAX_LIST_RESULTS]:
+            self.listbox.insert("end", option)
+
+    def _on_key(self, event: tk.Event) -> None:
+        if event.keysym in ("Down", "Up", "Return", "Escape", "Tab"):
             return
         typed = self.var.get().strip().lower()
-        self.combo["values"] = self.all_options if not typed else [o for o in self.all_options if typed in o.lower()]
+        filtered = self.all_options if not typed else [o for o in self.all_options if typed in o.lower()]
+        self._refresh_list(filtered)
 
-    def _on_write(self, *_args: object) -> None:
+    def _move_to_list(self, _event: tk.Event) -> str:
+        if self.listbox.size():
+            self.listbox.focus_set()
+            self.listbox.selection_clear(0, "end")
+            self.listbox.selection_set(0)
+            self.listbox.activate(0)
+        return "break"
+
+    def _select_first(self, _event: tk.Event) -> None:
+        if self.listbox.size() == 1 or (self.listbox.size() and self.var.get().strip()):
+            self.var.set(self.listbox.get(0))
+
+    def _on_listbox_select(self, _event: tk.Event) -> None:
+        selection = self.listbox.curselection()
+        if not selection:
+            return
+        self.var.set(self.listbox.get(selection[0]))
         if self.on_change is not None:
             self.on_change()
 
+    def set_options(self, options: list[str]) -> None:
+        self.all_options = options
+        self._refresh_list(options)
+
+    def set_style(self, style_name: str) -> None:
+        self.entry.configure(style=style_name)
+
 
 class SpeciesPicker(ttk.Frame):
-    """Searchable species dropdown, sortable by Dex #, A-Z, or the order
-    you'd fill in Z-A's own Lumiose Pokedex. Also accepts a bare National
-    Dex number typed directly, even outside the Z-A list -- there's no
-    legality checker here to stop you."""
+    """Search + always-visible results list over the ~232 species available
+    in Legends Z-A, sortable by Dex #, A-Z, or Z-A's own Lumiose Pokedex
+    fill-in order. Also accepts a bare National Dex number typed directly,
+    even outside the Z-A list -- there's no legality checker to stop you."""
 
     def __init__(self, parent: tk.Widget, on_change: Callable[[], None] | None = None) -> None:
         super().__init__(parent)
         self.sort_mode = "dex"
         self._on_change = on_change
 
-        self.picker = SearchablePicker(self, species.display_options(self.sort_mode), width=22, on_change=self._changed)
-        self.picker.pack(side="left")
-        self.picker.var.trace_add("write", self._revalidate)
-
         self.sort_var = tk.StringVar(value="Dex #")
         sort_combo = ttk.Combobox(
             self, textvariable=self.sort_var, values=[label for _, label in SPECIES_SORT_MODES],
-            width=12, state="readonly",
+            width=14, state="readonly",
         )
-        sort_combo.pack(side="left", padx=(6, 0))
+        sort_combo.grid(row=0, column=0, sticky="w", pady=(0, 3))
         sort_combo.bind("<<ComboboxSelected>>", self._on_sort_change)
 
-    def _changed(self) -> None:
+        self.picker = SearchableList(self, species.display_options(self.sort_mode), width=22, list_height=5, on_change=self._on_select)
+        self.picker.grid(row=1, column=0, sticky="w")
+        self.picker.var.trace_add("write", self._revalidate)
+
+    def _on_select(self) -> None:
         if self._on_change is not None:
             self._on_change()
 
@@ -148,7 +191,7 @@ class SpeciesPicker(ttk.Frame):
     def _revalidate(self, *_args: object) -> None:
         num = self.get_species_number()
         ok = bool(num) and species.name_for(num) is not None
-        self.picker.combo.configure(style="Valid.TCombobox" if ok else "Invalid.TCombobox")
+        self.picker.set_style("Valid.TEntry" if ok else "Invalid.TEntry")
 
     def get_species_number(self) -> int:
         return species.parse_selection(self.picker.var.get())
@@ -162,21 +205,21 @@ class SpeciesPicker(ttk.Frame):
 
 
 class MovePicker(ttk.Frame):
-    """Searchable move-name dropdown. Covers every standard move by name/id
-    -- not filtered to what any particular species can actually learn, since
-    we don't have per-species movepool data. Picking a move here confirms
-    it's a real move, not that this Pokemon can legally know it."""
+    """Search + results list over all real move names. Not filtered to what
+    any particular species can actually learn -- we don't have per-species
+    movepool data, so this confirms a move is real, not that this Pokemon
+    can legally know it."""
 
     def __init__(self, parent: tk.Widget) -> None:
         super().__init__(parent)
-        self.picker = SearchablePicker(self, moves_mod.display_options(), width=16)
+        self.picker = SearchableList(self, moves_mod.display_options(), width=16, list_height=6)
         self.picker.pack()
         self.picker.var.trace_add("write", self._revalidate)
 
     def _revalidate(self, *_args: object) -> None:
         num = self.get_move_id()
         ok = num == 0 or moves_mod.name_for(num) is not None
-        self.picker.combo.configure(style="Valid.TCombobox" if ok else "Invalid.TCombobox")
+        self.picker.set_style("Valid.TEntry" if ok else "Invalid.TEntry")
 
     def get_move_id(self) -> int:
         return moves_mod.parse_selection(self.picker.var.get())
@@ -187,6 +230,59 @@ class MovePicker(ttk.Frame):
             return
         name = moves_mod.name_for(move_id)
         self.picker.var.set(f"{move_id:03d}  {name}" if name else f"{move_id:03d}  (unknown move)")
+
+
+class AbilityPicker(ttk.Frame):
+    """Search + results list, filtered to the abilities the currently
+    selected species can actually have (regular slots + hidden). This is the
+    one field in PokeHex with real per-species legality checking -- unlike
+    ball/item ids, which are range-only."""
+
+    def __init__(self, parent: tk.Widget) -> None:
+        super().__init__(parent)
+        self._options_by_text: dict[str, tuple[int, int]] = {}
+        self.picker = SearchableList(self, [], width=26, list_height=4)
+        self.picker.pack()
+        self.picker.var.trace_add("write", self._revalidate)
+
+    def refresh_for_species(self, species_number: int) -> None:
+        entries = abilities_mod.SPECIES_ABILITIES.get(species_number)
+        self._options_by_text = {}
+        options: list[str] = []
+        if entries:
+            for ability_id, slot in sorted(entries, key=lambda t: t[1]):
+                name = abilities_mod.ABILITIES.get(ability_id, f"Ability {ability_id}")
+                slot_label = "Hidden" if slot == 3 else f"Slot {slot}"
+                text = f"{name} ({slot_label})"
+                ability_number = 4 if slot == 3 else slot
+                options.append(text)
+                self._options_by_text[text] = (ability_id, ability_number)
+        else:
+            for ability_id in sorted(abilities_mod.ABILITIES):
+                text = f"{abilities_mod.ABILITIES[ability_id]} (unknown slot)"
+                options.append(text)
+                self._options_by_text[text] = (ability_id, 0)
+        self.picker.set_options(options)
+        self._revalidate()
+
+    def _revalidate(self, *_args: object) -> None:
+        current = self.picker.var.get()
+        ok = (not current) or current in self._options_by_text
+        self.picker.set_style("Valid.TEntry" if ok else "Invalid.TEntry")
+
+    def get_selection(self) -> tuple[int, int]:
+        return self._options_by_text.get(self.picker.var.get(), (0, 0))
+
+    def set_selection(self, ability_id: int, ability_number: int) -> None:
+        if not ability_id:
+            self.picker.var.set("")
+            return
+        for text, (aid, num) in self._options_by_text.items():
+            if aid == ability_id and (num == ability_number or ability_number == 0):
+                self.picker.var.set(text)
+                return
+        name = abilities_mod.ABILITIES.get(ability_id, f"Ability id {ability_id}")
+        self.picker.var.set(f"{name} (not legal for this species)")
 
 
 class PokeHexApp(tk.Tk):
@@ -250,11 +346,11 @@ class PokeHexApp(tk.Tk):
         ttk.Separator(self, orient="horizontal").pack(side="top", fill="x")
 
     def _build_layout(self) -> None:
-        body = ttk.Frame(self)
+        body = ttk.Frame(self, padding=8)
         body.pack(side="top", fill="both", expand=True)
 
-        left = ttk.Frame(body, style="Panel.TFrame", padding=8)
-        left.pack(side="left", fill="y")
+        left = ttk.Frame(body, style="Panel.TFrame", padding=10)
+        left.pack(side="left", fill="y", padx=(0, 8))
 
         ttk.Label(left, text="BOX (1-32)", style="Panel.TLabel", font=theme.FONT_MONO_BOLD).pack(anchor="w")
         self.box_var = tk.IntVar(value=1)
@@ -262,61 +358,79 @@ class PokeHexApp(tk.Tk):
             left, from_=1, to=BOX_COUNT, textvariable=self.box_var, width=5, command=self.refresh_slot_list,
         ).pack(anchor="w", pady=(2, 8))
 
+        slot_list_frame = ttk.Frame(left)
+        slot_list_frame.pack(fill="both", expand=True)
+        slot_scrollbar = ttk.Scrollbar(slot_list_frame, orient="vertical")
         self.slot_list = tk.Listbox(
-            left, width=30, height=30, font=theme.FONT_MONO,
+            slot_list_frame, width=28, height=16, font=theme.FONT_MONO,
             bg=theme.PANEL_ALT, fg=theme.FG, selectbackground=theme.ACCENT_DIM,
-            selectforeground=theme.BG, highlightthickness=1, highlightbackground=theme.BORDER,
-            relief="flat", borderwidth=0,
+            selectforeground=theme.BG, highlightthickness=2, highlightbackground=theme.BORDER,
+            relief="sunken", borderwidth=2, yscrollcommand=slot_scrollbar.set,
         )
-        self.slot_list.pack(fill="y", expand=True)
+        slot_scrollbar.configure(command=self.slot_list.yview)
+        self.slot_list.pack(side="left", fill="both", expand=True)
+        slot_scrollbar.pack(side="left", fill="y")
         self.slot_list.bind("<<ListboxSelect>>", self.on_slot_select)
 
-        right = ttk.Frame(body, padding=(12, 8))
+        right = ttk.Frame(body, padding=(4, 0))
         right.pack(side="left", fill="both", expand=True)
 
         top_row = ttk.Frame(right)
-        top_row.pack(side="top", fill="x")
+        top_row.pack(side="top", fill="both", expand=True)
 
         self.sprite_canvas = tk.Canvas(top_row, width=96, height=96, highlightthickness=0)
-        self.sprite_canvas.pack(side="left", padx=(0, 16))
+        self.sprite_canvas.pack(side="left", anchor="n", padx=(0, 16), pady=(6, 0))
         theme.draw_sprite_placeholder(self.sprite_canvas)
 
-        identity_frame = ttk.Labelframe(top_row, text="IDENTITY", padding=8)
-        identity_frame.pack(side="left", fill="both", expand=True)
+        notebook = ttk.Notebook(top_row)
+        notebook.pack(side="left", fill="both", expand=True)
 
-        ttk.Label(identity_frame, text="Species").grid(row=0, column=0, sticky="w", padx=(0, 4), pady=2)
-        self.species_picker = SpeciesPicker(identity_frame, on_change=self._recompute_stats)
+        identity_tab = ttk.Frame(notebook, padding=10)
+        notebook.add(identity_tab, text="Identity")
+
+        ttk.Label(identity_tab, text="Species").grid(row=0, column=0, sticky="nw", padx=(0, 4), pady=2)
+        self.species_picker = SpeciesPicker(identity_tab, on_change=self._on_species_changed)
         self.species_picker.grid(row=0, column=1, columnspan=3, sticky="w", padx=(0, 16), pady=2)
 
-        self._build_field_grid(identity_frame, IDENTITY_FIELDS, start_row=1)
+        ttk.Label(identity_tab, text="Ability").grid(row=1, column=0, sticky="nw", padx=(0, 4), pady=2)
+        self.ability_picker = AbilityPicker(identity_tab)
+        self.ability_picker.grid(row=1, column=1, columnspan=3, sticky="w", padx=(0, 16), pady=2)
+        self.ability_picker.refresh_for_species(0)
 
-        mid_row = ttk.Frame(right)
-        mid_row.pack(side="top", fill="x", pady=8)
+        self._build_field_grid(identity_tab, IDENTITY_FIELDS, start_row=2)
 
-        iv_frame = ttk.Labelframe(mid_row, text="IVs (0-31)", padding=8)
+        stats_tab = ttk.Frame(notebook, padding=10)
+        notebook.add(stats_tab, text="Stats")
+
+        stat_row = ttk.Frame(stats_tab)
+        stat_row.pack(side="top", fill="x")
+
+        iv_frame = ttk.Labelframe(stat_row, text="IVs (0-31)", padding=8)
         iv_frame.pack(side="left", fill="both", expand=True, padx=(0, 6))
         self._build_stat_row(iv_frame, IV_FIELDS, _range_check(0, 31))
 
-        ev_frame = ttk.Labelframe(mid_row, text="EVs (0-252 each)", padding=8)
+        ev_frame = ttk.Labelframe(stat_row, text="EVs (0-252 each)", padding=8)
         ev_frame.pack(side="left", fill="both", expand=True, padx=6)
         self._build_stat_row(ev_frame, EV_FIELDS, _range_check(0, 252))
         self.ev_total_var = tk.StringVar(value=f"Total: 0/{EV_MAX_TOTAL}")
         self.ev_total_label = ttk.Label(ev_frame, textvariable=self.ev_total_var)
         self.ev_total_label.grid(row=2, column=0, columnspan=len(EV_FIELDS), sticky="w", pady=(4, 0))
 
-        stats_frame = ttk.Labelframe(right, text="COMPUTED STATS (live, from base stats + IV/EV/level/nature)", padding=8)
-        stats_frame.pack(side="top", fill="x", pady=(0, 8))
-        for col, (label, _idx) in enumerate(STAT_LABELS):
-            ttk.Label(stats_frame, text=label).grid(row=0, column=col, padx=8)
-            var = tk.StringVar(value="--")
-            self.stat_vars[label] = var
-            ttk.Label(stats_frame, textvariable=var, style="Header.TLabel").grid(row=1, column=col, padx=8)
-
         for key, _ in IV_FIELDS + EV_FIELDS:
             self.fields[key].trace_add("write", self._on_stat_input_changed)
 
-        move_frame = ttk.Labelframe(right, text="MOVES (real move names -- not filtered to this species' learnset)", padding=8)
-        move_frame.pack(side="top", fill="x", pady=(0, 8))
+        stats_frame = ttk.Labelframe(stats_tab, text="COMPUTED STATS (live, from base stats + IV/EV/level/nature)", padding=8)
+        stats_frame.pack(side="top", fill="x", pady=(10, 0))
+        for col, (label, _idx) in enumerate(STAT_LABELS):
+            ttk.Label(stats_frame, text=label).grid(row=0, column=col, padx=10, pady=4)
+            var = tk.StringVar(value="--")
+            self.stat_vars[label] = var
+            ttk.Label(stats_frame, textvariable=var, style="Header.TLabel").grid(row=1, column=col, padx=10)
+
+        moves_tab = ttk.Frame(notebook, padding=10)
+        notebook.add(moves_tab, text="Moves")
+        move_frame = ttk.Labelframe(moves_tab, text="MOVES (real move names -- not filtered to this species' learnset)", padding=8)
+        move_frame.pack(side="top", fill="x")
         for i, key in enumerate(MOVE_KEYS):
             ttk.Label(move_frame, text=f"Move {i + 1}").grid(row=0, column=i, padx=6)
             picker = MovePicker(move_frame)
@@ -332,9 +446,8 @@ class PokeHexApp(tk.Tk):
 
         legend = ttk.Label(
             right,
-            text="Blue = passes the check we run. Red = fails it. For ability/ball/item ids that only means "
-                 "\"well-formed number\" -- we don't have those legality tables ported. Moves are checked "
-                 "against the real move list, not against what this species can actually learn.",
+            text="Blue = passes the check we run. Red = fails it. Ability is checked for real against this "
+                 "species. Ball/item ids and moves are range/existence checks only -- not full legality.",
             style="Dim.TLabel", wraplength=560, justify="left",
         )
         legend.pack(side="top", fill="x", pady=(0, 4))
@@ -375,6 +488,10 @@ class PokeHexApp(tk.Tk):
             var = tk.StringVar(value="0")
             self.fields[key] = var
             self._make_entry(parent, key, var, validator, width=5).grid(row=1, column=i, padx=4)
+
+    def _on_species_changed(self) -> None:
+        self.ability_picker.refresh_for_species(self.species_picker.get_species_number())
+        self._recompute_stats()
 
     def _on_stat_input_changed(self, *_args: object) -> None:
         self._update_ev_total()
@@ -491,6 +608,8 @@ class PokeHexApp(tk.Tk):
 
     def _load_form_from_pkm(self, pkm: PA9) -> None:
         self.species_picker.set_species_number(pkm.species)
+        self.ability_picker.refresh_for_species(pkm.species)
+        self.ability_picker.set_selection(pkm.ability, pkm.ability_number)
         self.fields["form"].set(str(pkm.form))
         self.fields["level"].set(str(pkm.stat_level))
         self.fields["nickname"].set(pkm.nickname)
@@ -498,8 +617,6 @@ class PokeHexApp(tk.Tk):
         self.fields["tid16"].set(str(pkm.tid16))
         self.fields["sid16"].set(str(pkm.sid16))
         self.fields["nature"].set(str(pkm.nature))
-        self.fields["ability"].set(str(pkm.ability))
-        self.fields["ability_number"].set(str(pkm.ability_number))
         self.fields["gender"].set(str(pkm.gender))
         self.fields["ball"].set(str(pkm.ball))
         self.fields["held_item"].set(str(pkm.held_item))
@@ -521,11 +638,10 @@ class PokeHexApp(tk.Tk):
 
     def fill_smart_defaults(self) -> None:
         """Fills the form with sensible, legally-shaped values you can then
-        customize -- doesn't touch species or moves, so you still choose those."""
+        customize -- doesn't touch species/ability/moves, so you still choose those."""
         self.fields["form"].set("0")
         self.fields["level"].set("50")
         self.fields["nature"].set("0")
-        self.fields["ability_number"].set("0")
         self.fields["gender"].set("0")
         self.fields["ball"].set("4")  # Poke Ball
         self.fields["held_item"].set("0")
@@ -533,7 +649,7 @@ class PokeHexApp(tk.Tk):
             self.fields[key].set("31")
         for key, _ in EV_FIELDS:
             self.fields[key].set("0")
-        self.status_var.set("Smart defaults filled in -- pick a species and moves, then customize as needed.")
+        self.status_var.set("Smart defaults filled in -- pick a species, ability, and moves, then customize as needed.")
 
     def _build_pkm_from_form(self, pkm: PA9) -> PA9:
         if pkm.pid == 0:
@@ -542,6 +658,9 @@ class PokeHexApp(tk.Tk):
             pkm.encryption_constant = random.getrandbits(32)
 
         pkm.species = self.species_picker.get_species_number()
+        ability_id, ability_number = self.ability_picker.get_selection()
+        pkm.ability = ability_id
+        pkm.ability_number = ability_number
         pkm.form = _get_int(self.fields["form"])  # type: ignore[arg-type]
         level = max(1, min(100, _get_int(self.fields["level"])))  # type: ignore[arg-type]
         pkm.stat_level = level
@@ -551,8 +670,6 @@ class PokeHexApp(tk.Tk):
         pkm.tid16 = _get_int(self.fields["tid16"])  # type: ignore[arg-type]
         pkm.sid16 = _get_int(self.fields["sid16"])  # type: ignore[arg-type]
         pkm.nature = _get_int(self.fields["nature"])  # type: ignore[arg-type]
-        pkm.ability = _get_int(self.fields["ability"])  # type: ignore[arg-type]
-        pkm.ability_number = _get_int(self.fields["ability_number"])  # type: ignore[arg-type]
         pkm.gender = _get_int(self.fields["gender"])  # type: ignore[arg-type]
         pkm.ball = _get_int(self.fields["ball"])  # type: ignore[arg-type]
         pkm.held_item = _get_int(self.fields["held_item"])  # type: ignore[arg-type]

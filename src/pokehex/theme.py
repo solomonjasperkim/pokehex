@@ -1,5 +1,9 @@
-"""Retro-terminal visual theme for the PokeHex GUI. Original design -- no
-trademarked colors, marks, or character likenesses."""
+"""Retro-handheld-RPG-inspired visual theme for the PokeHex GUI.
+
+Original design: a beveled-box, dialogue-window aesthetic in the general
+spirit of classic handheld RPG UIs, built from plain ttk styling (no
+trademarked colors, logos, fonts, or character art -- see draw_logo below).
+"""
 
 from __future__ import annotations
 
@@ -7,17 +11,19 @@ import math
 import tkinter as tk
 from tkinter import ttk
 
-BG = "#0d1117"
-PANEL = "#161b22"
-PANEL_ALT = "#1c2430"
-BORDER = "#2c3644"
-FG = "#e8dcc8"
-FG_DIM = "#8a97a6"
-ACCENT = "#4fd1c5"
+BG = "#10141c"
+PANEL = "#182030"
+PANEL_ALT = "#1d2740"
+BORDER = "#324058"
+BEVEL_LIGHT = "#46587a"
+BEVEL_DARK = "#080a10"
+FG = "#eef1f7"
+FG_DIM = "#8a97b0"
+ACCENT = "#5be0d3"
 ACCENT_DIM = "#2f8f86"
-WARN = "#e3b23c"
-VALID = "#4da6ff"
-INVALID = "#ff5c5c"
+WARN = "#f0c14b"
+VALID = "#5aa9ff"
+INVALID = "#ff6161"
 
 FONT_MONO = ("Menlo", 11)
 FONT_MONO_BOLD = ("Menlo", 11, "bold")
@@ -35,46 +41,63 @@ def apply(root: tk.Tk) -> None:
 
     style.configure(".", background=BG, foreground=FG, font=FONT_MONO)
     style.configure("TFrame", background=BG)
-    style.configure("Panel.TFrame", background=PANEL)
+    style.configure("Panel.TFrame", background=PANEL, relief="ridge", borderwidth=3)
     style.configure("TLabel", background=BG, foreground=FG, font=FONT_MONO)
     style.configure("Panel.TLabel", background=PANEL, foreground=FG, font=FONT_MONO)
     style.configure("Dim.TLabel", background=BG, foreground=FG_DIM, font=FONT_MONO)
     style.configure("Header.TLabel", background=BG, foreground=ACCENT, font=FONT_MONO_BOLD)
 
+    # Beveled "dialogue box" look: distinct light/dark bevel colors so the
+    # groove relief actually reads as a raised console-style box frame.
     style.configure(
         "TLabelframe", background=BG, foreground=ACCENT, bordercolor=BORDER,
-        darkcolor=BORDER, lightcolor=BORDER, relief="groove",
+        darkcolor=BEVEL_DARK, lightcolor=BEVEL_LIGHT, relief="groove", borderwidth=3,
     )
     style.configure("TLabelframe.Label", background=BG, foreground=ACCENT, font=FONT_MONO_BOLD)
 
     style.configure(
         "TButton", background=PANEL_ALT, foreground=FG, font=FONT_MONO_BOLD,
-        bordercolor=ACCENT_DIM, focusthickness=1, focuscolor=ACCENT, relief="flat", padding=6,
+        bordercolor=BORDER, darkcolor=BEVEL_DARK, lightcolor=BEVEL_LIGHT,
+        focusthickness=1, focuscolor=ACCENT, relief="raised", borderwidth=3, padding=7,
     )
     style.map(
         "TButton",
         background=[("active", ACCENT_DIM), ("pressed", ACCENT_DIM)],
         foreground=[("active", BG)],
+        relief=[("pressed", "sunken")],
     )
 
     style.configure(
         "TEntry", fieldbackground=PANEL_ALT, foreground=FG, insertcolor=ACCENT,
-        bordercolor=BORDER, lightcolor=BORDER, darkcolor=BORDER,
+        bordercolor=BORDER, lightcolor=BEVEL_DARK, darkcolor=BEVEL_LIGHT, relief="sunken", borderwidth=2,
     )
     style.configure(
         "TSpinbox", fieldbackground=PANEL_ALT, foreground=FG, insertcolor=ACCENT,
-        arrowcolor=ACCENT, bordercolor=BORDER,
+        arrowcolor=ACCENT, bordercolor=BORDER, relief="sunken", borderwidth=2,
+    )
+    style.configure(
+        "TCombobox", fieldbackground=PANEL_ALT, foreground=FG, insertcolor=ACCENT,
+        arrowcolor=ACCENT, bordercolor=BORDER, relief="sunken", borderwidth=2,
+    )
+    style.configure("TSeparator", background=BORDER)
+
+    style.configure("TNotebook", background=BG, bordercolor=BORDER, darkcolor=BEVEL_DARK, lightcolor=BEVEL_LIGHT, borderwidth=3)
+    style.configure(
+        "TNotebook.Tab", background=PANEL, foreground=FG_DIM, font=FONT_MONO_BOLD,
+        padding=(14, 6), bordercolor=BORDER,
+    )
+    style.map(
+        "TNotebook.Tab",
+        background=[("selected", PANEL_ALT)],
+        foreground=[("selected", ACCENT)],
+        expand=[("selected", (1, 1, 1, 0))],
     )
 
     # Live field validation: blue = passes the check we actually run, red =
-    # fails it. For fields with no ported legality data (ability/ball/item/
-    # move ids), this only confirms "well-formed number" -- not true legality.
+    # fails it. For fields with no ported legality data (ball/item ids),
+    # this only confirms "well-formed number" -- not true legality.
     style.configure("Valid.TEntry", fieldbackground=PANEL_ALT, foreground=VALID, insertcolor=VALID, bordercolor=VALID)
     style.configure("Invalid.TEntry", fieldbackground=PANEL_ALT, foreground=INVALID, insertcolor=INVALID, bordercolor=INVALID)
-    style.configure("Valid.TCombobox", fieldbackground=PANEL_ALT, foreground=VALID, arrowcolor=VALID, bordercolor=VALID)
-    style.configure("Invalid.TCombobox", fieldbackground=PANEL_ALT, foreground=INVALID, arrowcolor=INVALID, bordercolor=INVALID)
-    style.map("Valid.TCombobox", fieldbackground=[("readonly", PANEL_ALT)], foreground=[("readonly", VALID)])
-    style.map("Invalid.TCombobox", fieldbackground=[("readonly", PANEL_ALT)], foreground=[("readonly", INVALID)])
 
 
 def draw_logo(canvas: tk.Canvas) -> None:
@@ -108,7 +131,7 @@ def draw_logo(canvas: tk.Canvas) -> None:
 def draw_sprite_placeholder(canvas: tk.Canvas, size: int = 96) -> None:
     """Original placeholder icon shown when no user-supplied sprite is found."""
     canvas.delete("all")
-    canvas.configure(bg=PANEL_ALT, highlightthickness=1, highlightbackground=BORDER)
+    canvas.configure(bg=PANEL_ALT, highlightthickness=2, highlightbackground=BORDER)
     cx = cy = size / 2
     r = size * 0.32
     points: list[float] = []
