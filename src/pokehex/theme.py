@@ -68,16 +68,28 @@ def apply(root: tk.Tk) -> None:
     )
 
     style.configure(
-        "TEntry", fieldbackground=PANEL_ALT, foreground=FG, insertcolor=ACCENT,
+        "TEntry", fieldbackground=PANEL_ALT, foreground=FG, insertcolor=ACCENT, font=FONT_MONO,
         bordercolor=BORDER, lightcolor=BEVEL_DARK, darkcolor=BEVEL_LIGHT, relief="sunken", borderwidth=2,
     )
     style.configure(
-        "TSpinbox", fieldbackground=PANEL_ALT, foreground=FG, insertcolor=ACCENT,
+        "TSpinbox", fieldbackground=PANEL_ALT, foreground=FG, insertcolor=ACCENT, font=FONT_MONO,
         arrowcolor=ACCENT, bordercolor=BORDER, relief="sunken", borderwidth=2,
     )
     style.configure(
-        "TCombobox", fieldbackground=PANEL_ALT, foreground=FG, insertcolor=ACCENT,
+        "TCombobox", fieldbackground=PANEL_ALT, foreground=FG, insertcolor=ACCENT, font=FONT_MONO,
         arrowcolor=ACCENT, bordercolor=BORDER, relief="sunken", borderwidth=2,
+        selectbackground=PANEL_ALT, selectforeground=FG,
+    )
+    # clam's "readonly" combobox state has its own hardcoded light-grey
+    # look unless explicitly overridden here.
+    style.map(
+        "TCombobox",
+        fieldbackground=[("readonly", PANEL_ALT), ("disabled", PANEL)],
+        foreground=[("readonly", FG), ("disabled", FG_DIM)],
+        selectbackground=[("readonly", PANEL_ALT)],
+        selectforeground=[("readonly", FG)],
+        background=[("readonly", PANEL_ALT)],
+        arrowcolor=[("readonly", ACCENT)],
     )
     style.configure("TSeparator", background=BORDER)
 
@@ -98,6 +110,20 @@ def apply(root: tk.Tk) -> None:
     # this only confirms "well-formed number" -- not true legality.
     style.configure("Valid.TEntry", fieldbackground=PANEL_ALT, foreground=VALID, insertcolor=VALID, bordercolor=VALID)
     style.configure("Invalid.TEntry", fieldbackground=PANEL_ALT, foreground=INVALID, insertcolor=INVALID, bordercolor=INVALID)
+
+    # Small toggle-style icon buttons (e.g. the species sort picker).
+    style.configure(
+        "Toggle.TButton", background=PANEL_ALT, foreground=FG_DIM, font=FONT_MONO_BOLD,
+        bordercolor=BORDER, darkcolor=BEVEL_DARK, lightcolor=BEVEL_LIGHT,
+        relief="raised", borderwidth=2, padding=(6, 3),
+    )
+    style.map("Toggle.TButton", background=[("active", ACCENT_DIM)], foreground=[("active", BG)])
+    style.configure(
+        "ToggleOn.TButton", background=ACCENT_DIM, foreground=BG, font=FONT_MONO_BOLD,
+        bordercolor=ACCENT, darkcolor=BEVEL_DARK, lightcolor=ACCENT,
+        relief="sunken", borderwidth=2, padding=(6, 3),
+    )
+    style.map("ToggleOn.TButton", background=[("active", ACCENT_DIM)], foreground=[("active", BG)])
 
 
 def draw_logo(canvas: tk.Canvas) -> None:
