@@ -60,12 +60,12 @@ def _len_check(n: int) -> Validator:
 # lookup for the others; existence-only, no per-context legality).
 IDENTITY_FIELDS: list[tuple[str, str, bool, Validator | None]] = [
     ("form", "Form", False, _nonneg_check),
-    ("level", "Level (1-100)", False, _range_check(1, 100)),
-    ("nickname", "Nickname (<=12 ch)", True, _len_check(12)),
-    ("original_trainer_name", "OT Name -- original catcher (<=12 ch)", True, _len_check(12)),
-    ("tid16", "TID (0-65535)", False, _range_check(0, 65535)),
-    ("sid16", "SID (0-65535)", False, _range_check(0, 65535)),
-    ("gender", "Gender (0=M 1=F 2=N)", False, _set_check({0, 1, 2})),
+    ("level", "Level", False, _range_check(1, 100)),
+    ("nickname", "Nickname", True, _len_check(12)),
+    ("original_trainer_name", "OT Name", True, _len_check(12)),
+    ("tid16", "TID", False, _range_check(0, 65535)),
+    ("sid16", "SID", False, _range_check(0, 65535)),
+    ("gender", "Gender", False, _set_check({0, 1, 2})),
 ]
 
 IV_FIELDS = [("iv_hp", "HP"), ("iv_atk", "Atk"), ("iv_def", "Def"), ("iv_spa", "SpA"), ("iv_spd", "SpD"), ("iv_spe", "Spe")]
