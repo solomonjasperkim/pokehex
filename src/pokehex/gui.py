@@ -14,7 +14,8 @@ from tkinter import filedialog, messagebox, ttk
 from typing import Callable
 
 from . import sprites, theme
-from .za import species
+from .za import base_stats, moves as moves_mod, species
+from .za import stats as stats_mod
 from .za.pa9 import PA9
 from .za.save import BOX_COUNT, SLOTS_PER_BOX, SAV9ZA
 
@@ -53,8 +54,8 @@ def _len_check(n: int) -> Validator:
 
 
 # (key, label, is_string, validator). Fields marked "range-only" below have
-# no ported legality data (we don't have ability/ball/item/move tables) --
-# they only confirm "well-formed non-negative number," not true legality.
+# no ported legality data (we don't have ability/ball/item tables) -- they
+# only confirm "well-formed non-negative number," not true legality.
 IDENTITY_FIELDS: list[tuple[str, str, bool, Validator | None]] = [
     ("form", "Form", False, _nonneg_check),
     ("level", "Level (1-100)", False, _range_check(1, 100)),
@@ -72,11 +73,11 @@ IDENTITY_FIELDS: list[tuple[str, str, bool, Validator | None]] = [
 
 IV_FIELDS = [("iv_hp", "HP"), ("iv_atk", "Atk"), ("iv_def", "Def"), ("iv_spa", "SpA"), ("iv_spd", "SpD"), ("iv_spe", "Spe")]
 EV_FIELDS = [("ev_hp", "HP"), ("ev_atk", "Atk"), ("ev_def", "Def"), ("ev_spa", "SpA"), ("ev_spd", "SpD"), ("ev_spe", "Spe")]
-MOVE_FIELDS = [("move1", "Move 1"), ("move2", "Move 2"), ("move3", "Move 3"), ("move4", "Move 4")]
-MOVE_VALIDATOR = _range_check(0, 1000)  # sanity bound only, not a real max-move-id table
+MOVE_KEYS = ["move1", "move2", "move3", "move4"]
+STAT_LABELS = [("HP", 0), ("Atk", 1), ("Def", 2), ("SpA", 3), ("SpD", 4), ("Spe", 5)]
 EV_MAX_TOTAL = 510
 
-_ALL_SPECIES_OPTIONS = species.display_options()
+SPECIES_SORT_MODES = [("dex", "Dex #"), ("alpha", "A-Z"), ("fillin", "Fill-in Order")]
 
 
 def _get_int(var: tk.StringVar, default: int = 0) -> int:
@@ -84,45 +85,108 @@ def _get_int(var: tk.StringVar, default: int = 0) -> int:
     return default if not text else int(text)
 
 
-class SpeciesPicker(ttk.Frame):
-    """A searchable dropdown over the ~232 species available in Legends Z-A.
-    Type to filter by name; you can also type a bare National Dex number
-    directly (accepted even if it's not in the Z-A list, since there's no
-    legality checker here -- that's on you)."""
+class SearchablePicker(ttk.Frame):
+    """A type-to-filter Combobox over a set of '### Name' options."""
 
-    def __init__(self, parent: tk.Widget) -> None:
+    def __init__(self, parent: tk.Widget, options: list[str], width: int = 22, on_change: Callable[[], None] | None = None) -> None:
         super().__init__(parent)
+        self.all_options = options
+        self.on_change = on_change
         self.var = tk.StringVar()
-        self.combo = ttk.Combobox(self, textvariable=self.var, values=_ALL_SPECIES_OPTIONS, width=22, style="Invalid.TCombobox")
+        self.combo = ttk.Combobox(self, textvariable=self.var, values=self.all_options, width=width, style="Invalid.TCombobox")
         self.combo.pack()
         self.combo.bind("<KeyRelease>", self._on_keyrelease)
-        self.var.trace_add("write", self._revalidate)
+        self.var.trace_add("write", self._on_write)
+
+    def set_options(self, options: list[str]) -> None:
+        self.all_options = options
+        self.combo["values"] = self.all_options
 
     def _on_keyrelease(self, event: tk.Event) -> None:
         if event.keysym in ("Up", "Down", "Return", "Escape", "Tab"):
             return
         typed = self.var.get().strip().lower()
-        if not typed:
-            self.combo["values"] = _ALL_SPECIES_OPTIONS
-        else:
-            self.combo["values"] = [o for o in _ALL_SPECIES_OPTIONS if typed in o.lower()]
+        self.combo["values"] = self.all_options if not typed else [o for o in self.all_options if typed in o.lower()]
+
+    def _on_write(self, *_args: object) -> None:
+        if self.on_change is not None:
+            self.on_change()
+
+
+class SpeciesPicker(ttk.Frame):
+    """Searchable species dropdown, sortable by Dex #, A-Z, or the order
+    you'd fill in Z-A's own Lumiose Pokedex. Also accepts a bare National
+    Dex number typed directly, even outside the Z-A list -- there's no
+    legality checker here to stop you."""
+
+    def __init__(self, parent: tk.Widget, on_change: Callable[[], None] | None = None) -> None:
+        super().__init__(parent)
+        self.sort_mode = "dex"
+        self._on_change = on_change
+
+        self.picker = SearchablePicker(self, species.display_options(self.sort_mode), width=22, on_change=self._changed)
+        self.picker.pack(side="left")
+        self.picker.var.trace_add("write", self._revalidate)
+
+        self.sort_var = tk.StringVar(value="Dex #")
+        sort_combo = ttk.Combobox(
+            self, textvariable=self.sort_var, values=[label for _, label in SPECIES_SORT_MODES],
+            width=12, state="readonly",
+        )
+        sort_combo.pack(side="left", padx=(6, 0))
+        sort_combo.bind("<<ComboboxSelected>>", self._on_sort_change)
+
+    def _changed(self) -> None:
+        if self._on_change is not None:
+            self._on_change()
+
+    def _on_sort_change(self, _event: object) -> None:
+        label_to_mode = {label: mode for mode, label in SPECIES_SORT_MODES}
+        self.sort_mode = label_to_mode[self.sort_var.get()]
+        self.picker.set_options(species.display_options(self.sort_mode))
 
     def _revalidate(self, *_args: object) -> None:
-        ok = bool(self.get_species_number()) and species.name_for(self.get_species_number()) is not None
-        self.combo.configure(style="Valid.TCombobox" if ok else "Invalid.TCombobox")
+        num = self.get_species_number()
+        ok = bool(num) and species.name_for(num) is not None
+        self.picker.combo.configure(style="Valid.TCombobox" if ok else "Invalid.TCombobox")
 
     def get_species_number(self) -> int:
-        return species.parse_selection(self.var.get())
+        return species.parse_selection(self.picker.var.get())
 
     def set_species_number(self, number: int) -> None:
         if not number:
-            self.var.set("")
+            self.picker.var.set("")
             return
         name = species.name_for(number)
-        if name:
-            self.var.set(f"{number:03d}  {name}")
-        else:
-            self.var.set(f"{number:03d}  (not in Z-A list)")
+        self.picker.var.set(f"{number:03d}  {name}" if name else f"{number:03d}  (not in Z-A list)")
+
+
+class MovePicker(ttk.Frame):
+    """Searchable move-name dropdown. Covers every standard move by name/id
+    -- not filtered to what any particular species can actually learn, since
+    we don't have per-species movepool data. Picking a move here confirms
+    it's a real move, not that this Pokemon can legally know it."""
+
+    def __init__(self, parent: tk.Widget) -> None:
+        super().__init__(parent)
+        self.picker = SearchablePicker(self, moves_mod.display_options(), width=16)
+        self.picker.pack()
+        self.picker.var.trace_add("write", self._revalidate)
+
+    def _revalidate(self, *_args: object) -> None:
+        num = self.get_move_id()
+        ok = num == 0 or moves_mod.name_for(num) is not None
+        self.picker.combo.configure(style="Valid.TCombobox" if ok else "Invalid.TCombobox")
+
+    def get_move_id(self) -> int:
+        return moves_mod.parse_selection(self.picker.var.get())
+
+    def set_move_id(self, move_id: int) -> None:
+        if not move_id:
+            self.picker.var.set("")
+            return
+        name = moves_mod.name_for(move_id)
+        self.picker.var.set(f"{move_id:03d}  {name}" if name else f"{move_id:03d}  (unknown move)")
 
 
 class PokeHexApp(tk.Tk):
@@ -137,6 +201,8 @@ class PokeHexApp(tk.Tk):
         self.current_slot: int | None = None
         self.fields: dict[str, tk.Variable] = {}
         self.field_widgets: dict[str, ttk.Entry] = {}
+        self.move_pickers: list[MovePicker] = []
+        self.stat_vars: dict[str, tk.StringVar] = {}
         self._sprite_image = None  # keep a reference so Tk doesn't garbage-collect it
 
         self._build_menu()
@@ -219,8 +285,8 @@ class PokeHexApp(tk.Tk):
         identity_frame.pack(side="left", fill="both", expand=True)
 
         ttk.Label(identity_frame, text="Species").grid(row=0, column=0, sticky="w", padx=(0, 4), pady=2)
-        self.species_picker = SpeciesPicker(identity_frame)
-        self.species_picker.grid(row=0, column=1, sticky="w", padx=(0, 16), pady=2)
+        self.species_picker = SpeciesPicker(identity_frame, on_change=self._recompute_stats)
+        self.species_picker.grid(row=0, column=1, columnspan=3, sticky="w", padx=(0, 16), pady=2)
 
         self._build_field_grid(identity_frame, IDENTITY_FIELDS, start_row=1)
 
@@ -237,12 +303,25 @@ class PokeHexApp(tk.Tk):
         self.ev_total_var = tk.StringVar(value=f"Total: 0/{EV_MAX_TOTAL}")
         self.ev_total_label = ttk.Label(ev_frame, textvariable=self.ev_total_var)
         self.ev_total_label.grid(row=2, column=0, columnspan=len(EV_FIELDS), sticky="w", pady=(4, 0))
-        for key, _ in EV_FIELDS:
-            self.fields[key].trace_add("write", self._update_ev_total)
 
-        move_frame = ttk.Labelframe(right, text="MOVES (range-only check)", padding=8)
+        stats_frame = ttk.Labelframe(right, text="COMPUTED STATS (live, from base stats + IV/EV/level/nature)", padding=8)
+        stats_frame.pack(side="top", fill="x", pady=(0, 8))
+        for col, (label, _idx) in enumerate(STAT_LABELS):
+            ttk.Label(stats_frame, text=label).grid(row=0, column=col, padx=8)
+            var = tk.StringVar(value="--")
+            self.stat_vars[label] = var
+            ttk.Label(stats_frame, textvariable=var, style="Header.TLabel").grid(row=1, column=col, padx=8)
+
+        for key, _ in IV_FIELDS + EV_FIELDS:
+            self.fields[key].trace_add("write", self._on_stat_input_changed)
+
+        move_frame = ttk.Labelframe(right, text="MOVES (real move names -- not filtered to this species' learnset)", padding=8)
         move_frame.pack(side="top", fill="x", pady=(0, 8))
-        self._build_move_row(move_frame)
+        for i, key in enumerate(MOVE_KEYS):
+            ttk.Label(move_frame, text=f"Move {i + 1}").grid(row=0, column=i, padx=6)
+            picker = MovePicker(move_frame)
+            picker.grid(row=1, column=i, padx=6)
+            self.move_pickers.append(picker)
 
         btn_frame = ttk.Frame(right)
         btn_frame.pack(side="top", fill="x", pady=4)
@@ -253,9 +332,10 @@ class PokeHexApp(tk.Tk):
 
         legend = ttk.Label(
             right,
-            text="Blue = passes the check we run. Red = fails it. For ability/ball/item/move ids that only "
-                 "means \"well-formed number\" -- we don't have those legality tables ported.",
-            style="Dim.TLabel", wraplength=520, justify="left",
+            text="Blue = passes the check we run. Red = fails it. For ability/ball/item ids that only means "
+                 "\"well-formed number\" -- we don't have those legality tables ported. Moves are checked "
+                 "against the real move list, not against what this species can actually learn.",
+            style="Dim.TLabel", wraplength=560, justify="left",
         )
         legend.pack(side="top", fill="x", pady=(0, 4))
 
@@ -286,6 +366,8 @@ class PokeHexApp(tk.Tk):
             self._make_entry(parent, key, var, validator, width=16).grid(
                 row=row, column=col * 2 + 1, sticky="w", padx=(0, 16), pady=2,
             )
+            if key in ("level", "nature"):
+                var.trace_add("write", self._on_stat_input_changed)
 
     def _build_stat_row(self, parent: ttk.Frame, specs: list[tuple[str, str]], validator: Validator) -> None:
         for i, (key, label) in enumerate(specs):
@@ -294,12 +376,9 @@ class PokeHexApp(tk.Tk):
             self.fields[key] = var
             self._make_entry(parent, key, var, validator, width=5).grid(row=1, column=i, padx=4)
 
-    def _build_move_row(self, parent: ttk.Frame) -> None:
-        for i, (key, label) in enumerate(MOVE_FIELDS):
-            ttk.Label(parent, text=label).grid(row=0, column=i, padx=6)
-            var = tk.StringVar(value="0")
-            self.fields[key] = var
-            self._make_entry(parent, key, var, MOVE_VALIDATOR, width=10).grid(row=1, column=i, padx=6)
+    def _on_stat_input_changed(self, *_args: object) -> None:
+        self._update_ev_total()
+        self._recompute_stats()
 
     def _update_ev_total(self, *_args: object) -> None:
         total = 0
@@ -310,6 +389,28 @@ class PokeHexApp(tk.Tk):
                 pass
         self.ev_total_var.set(f"Total: {total}/{EV_MAX_TOTAL}")
         self.ev_total_label.configure(foreground=theme.VALID if total <= EV_MAX_TOTAL else theme.INVALID)
+
+    def _current_computed_stats(self) -> tuple[int, int, int, int, int, int] | None:
+        base = base_stats.BASE_STATS.get(self.species_picker.get_species_number())
+        if base is None:
+            return None
+        try:
+            ivs = tuple(_get_int(self.fields[k]) for k, _ in IV_FIELDS)  # type: ignore[arg-type]
+            evs = tuple(_get_int(self.fields[k]) for k, _ in EV_FIELDS)  # type: ignore[arg-type]
+            level = max(1, min(100, _get_int(self.fields["level"])))  # type: ignore[arg-type]
+            nature = _get_int(self.fields["nature"])  # type: ignore[arg-type]
+        except ValueError:
+            return None
+        return stats_mod.compute_stats(base, ivs, evs, level, nature)  # type: ignore[arg-type]
+
+    def _recompute_stats(self) -> None:
+        computed = self._current_computed_stats()
+        if computed is None:
+            for label, _ in STAT_LABELS:
+                self.stat_vars[label].set("--")
+            return
+        for label, idx in STAT_LABELS:
+            self.stat_vars[label].set(str(computed[idx]))
 
     # -- file ops ---------------------------------------------------------
     def open_save(self) -> None:
@@ -414,14 +515,13 @@ class PokeHexApp(tk.Tk):
         self.fields["ev_spa"].set(str(pkm.ev_spa))
         self.fields["ev_spd"].set(str(pkm.ev_spd))
         self.fields["ev_spe"].set(str(pkm.ev_spe))
-        self.fields["move1"].set(str(pkm.move(0)))
-        self.fields["move2"].set(str(pkm.move(1)))
-        self.fields["move3"].set(str(pkm.move(2)))
-        self.fields["move4"].set(str(pkm.move(3)))
+        for i, picker in enumerate(self.move_pickers):
+            picker.set_move_id(pkm.move(i))
+        self._recompute_stats()
 
     def fill_smart_defaults(self) -> None:
         """Fills the form with sensible, legally-shaped values you can then
-        customize -- doesn't touch species, so you still choose that."""
+        customize -- doesn't touch species or moves, so you still choose those."""
         self.fields["form"].set("0")
         self.fields["level"].set("50")
         self.fields["nature"].set("0")
@@ -433,9 +533,7 @@ class PokeHexApp(tk.Tk):
             self.fields[key].set("31")
         for key, _ in EV_FIELDS:
             self.fields[key].set("0")
-        for key, _ in MOVE_FIELDS:
-            self.fields[key].set("0")
-        self.status_var.set("Smart defaults filled in -- pick a species, then customize as needed.")
+        self.status_var.set("Smart defaults filled in -- pick a species and moves, then customize as needed.")
 
     def _build_pkm_from_form(self, pkm: PA9) -> PA9:
         if pkm.pid == 0:
@@ -470,14 +568,24 @@ class PokeHexApp(tk.Tk):
         pkm.ev_spa = _get_int(self.fields["ev_spa"])  # type: ignore[arg-type]
         pkm.ev_spd = _get_int(self.fields["ev_spd"])  # type: ignore[arg-type]
         pkm.ev_spe = _get_int(self.fields["ev_spe"])  # type: ignore[arg-type]
-        pkm.set_move(0, _get_int(self.fields["move1"]))  # type: ignore[arg-type]
-        pkm.set_move(1, _get_int(self.fields["move2"]))  # type: ignore[arg-type]
-        pkm.set_move(2, _get_int(self.fields["move3"]))  # type: ignore[arg-type]
-        pkm.set_move(3, _get_int(self.fields["move4"]))  # type: ignore[arg-type]
+        for i, picker in enumerate(self.move_pickers):
+            pkm.set_move(i, picker.get_move_id())
         for i in range(4):
             if pkm.move(i) != 0 and pkm.move_pp(i) == 0:
                 pkm.set_move_pp(i, 1)
-        pkm.stat_hp_current = max(pkm.stat_hp_current, 1)
+
+        computed = self._current_computed_stats()
+        if computed is not None:
+            hp, atk, defense, spa, spd, spe = computed
+            pkm.stat_hp_max = hp
+            pkm.stat_atk = atk
+            pkm.stat_def = defense
+            pkm.stat_spa = spa
+            pkm.stat_spd = spd
+            pkm.stat_spe = spe
+            pkm.stat_hp_current = hp  # full heal
+        else:
+            pkm.stat_hp_current = max(pkm.stat_hp_current, 1)
         return pkm
 
     def apply_to_slot(self) -> None:
@@ -496,6 +604,8 @@ class PokeHexApp(tk.Tk):
             warnings.append("species not in the Z-A list")
         if ev_total > EV_MAX_TOTAL:
             warnings.append(f"EV total {ev_total} exceeds {EV_MAX_TOTAL}")
+        if pkm.species not in base_stats.BASE_STATS:
+            warnings.append("no base stats for this species -- battle stats left unchanged")
         self.sav.set_box_slot(self.current_box, self.current_slot, pkm)
         self.refresh_slot_list()
         self._refresh_sprite(pkm.species)
