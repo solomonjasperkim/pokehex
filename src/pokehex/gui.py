@@ -405,13 +405,20 @@ class PokeHexApp(tk.Tk):
 
     # -- window sizing ----------------------------------------------------
     def _fit_window(self) -> None:
+        """Opens maximized (fills the screen's work area, menu bar excluded)
+        rather than -zoomed (not supported on this Tk/macOS build) or
+        -fullscreen (that's macOS's disruptive full-Space mode, not what
+        "maximized" means here). Any content that still doesn't fit is
+        handled by the right panel's scrollable canvas, so this adapts to
+        any screen size (13" laptop or external display) without needing to
+        precisely measure content."""
         self.update_idletasks()
-        width = self.winfo_reqwidth()
-        height = self.winfo_reqheight()
-        x = max(0, (self.winfo_screenwidth() - width) // 2)
-        y = max(0, (self.winfo_screenheight() - height) // 3)
-        self.geometry(f"{width}x{height}+{x}+{y}")
-        self.minsize(width, height)
+        screen_w = self.winfo_screenwidth()
+        screen_h = self.winfo_screenheight()
+        menu_bar_margin = 30
+        height = screen_h - menu_bar_margin
+        self.geometry(f"{screen_w}x{height}+0+{menu_bar_margin}")
+        self.minsize(900, 600)
 
     # -- layout ---------------------------------------------------------
     def _build_menu(self) -> None:
@@ -468,8 +475,35 @@ class PokeHexApp(tk.Tk):
         slot_scrollbar.pack(side="left", fill="y")
         self.slot_list.bind("<<ListboxSelect>>", self.on_slot_select)
 
-        right = ttk.Frame(body, padding=(4, 0))
-        right.pack(side="left", fill="both", expand=True)
+        right_container = ttk.Frame(body)
+        right_container.pack(side="left", fill="both", expand=True, padx=(4, 0))
+
+        right_canvas = tk.Canvas(right_container, bg=theme.BG, highlightthickness=0)
+        right_scrollbar = ttk.Scrollbar(right_container, orient="vertical", command=right_canvas.yview)
+
+        def _autohide_scrollbar(first: str, last: str) -> None:
+            # Standard Tk pattern: yscrollcommand receives the visible
+            # fraction of content as (first, last) in [0.0, 1.0]. If it's
+            # the whole range, nothing needs scrolling -- hide the bar.
+            if float(first) <= 0.0 and float(last) >= 1.0:
+                right_scrollbar.pack_forget()
+            else:
+                right_scrollbar.pack(side="left", fill="y")
+            right_scrollbar.set(first, last)
+
+        right_canvas.configure(yscrollcommand=_autohide_scrollbar)
+        right_canvas.pack(side="left", fill="both", expand=True)
+
+        right = ttk.Frame(right_canvas)
+        right_window = right_canvas.create_window((0, 0), window=right, anchor="nw")
+        right.bind("<Configure>", lambda _e: right_canvas.configure(scrollregion=right_canvas.bbox("all")))
+        right_canvas.bind("<Configure>", lambda e: right_canvas.itemconfig(right_window, width=e.width))
+
+        def _on_mousewheel(event: tk.Event) -> None:
+            right_canvas.yview_scroll(int(-event.delta), "units")
+
+        right_canvas.bind("<Enter>", lambda _e: right_canvas.bind_all("<MouseWheel>", _on_mousewheel))
+        right_canvas.bind("<Leave>", lambda _e: right_canvas.unbind_all("<MouseWheel>"))
 
         top_row = ttk.Frame(right)
         top_row.pack(side="top", fill="x")
