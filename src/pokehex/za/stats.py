@@ -46,6 +46,28 @@ NATURE_NAMES: dict[int, str] = {
 }
 
 
+def display_options() -> list[str]:
+    return [f"{nid:02d}  {name}" for nid, name in sorted(NATURE_NAMES.items())]
+
+
+def name_for(nature_id: int) -> str | None:
+    return NATURE_NAMES.get(nature_id)
+
+
+def parse_selection(text: str) -> int:
+    text = text.strip()
+    if not text:
+        return 0
+    head = text.split(None, 1)[0]
+    if head.isdigit():
+        return int(head)
+    lowered = text.lower()
+    for nid, name in NATURE_NAMES.items():
+        if name.lower() == lowered:
+            return nid
+    return 0
+
+
 def _nature_multiplier(nature: int, stat_index: int) -> float:
     boosted, lowered = NATURE_MODIFIERS.get(nature, (None, None))
     if stat_index == boosted:

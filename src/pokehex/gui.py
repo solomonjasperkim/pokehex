@@ -14,7 +14,8 @@ from tkinter import filedialog, messagebox, ttk
 from typing import Callable
 
 from . import sprites, theme
-from .za import abilities as abilities_mod, base_stats, moves as moves_mod, species
+from .za import abilities as abilities_mod, balls as balls_mod, base_stats
+from .za import items as items_mod, moves as moves_mod, species
 from .za import stats as stats_mod
 from .za.pa9 import PA9
 from .za.save import BOX_COUNT, SLOTS_PER_BOX, SAV9ZA
@@ -53,21 +54,18 @@ def _len_check(n: int) -> Validator:
     return check
 
 
-# (key, label, is_string, validator). Fields marked "range-only" below have
-# no ported legality data (we don't have ball/item tables) -- they only
-# confirm "well-formed non-negative number," not true legality. Ability is
-# handled separately by AbilityPicker, which does have real per-species data.
+# (key, label, is_string, validator). Ability/Nature/Ball/Held Item are
+# handled by dedicated name pickers, not this generic grid -- see
+# AbilityPicker (real per-species legality) and NameIdPicker (name<->id
+# lookup for the others; existence-only, no per-context legality).
 IDENTITY_FIELDS: list[tuple[str, str, bool, Validator | None]] = [
     ("form", "Form", False, _nonneg_check),
     ("level", "Level (1-100)", False, _range_check(1, 100)),
     ("nickname", "Nickname (<=12 ch)", True, _len_check(12)),
-    ("original_trainer_name", "OT Name (<=12 ch)", True, _len_check(12)),
+    ("original_trainer_name", "OT Name -- original catcher (<=12 ch)", True, _len_check(12)),
     ("tid16", "TID (0-65535)", False, _range_check(0, 65535)),
     ("sid16", "SID (0-65535)", False, _range_check(0, 65535)),
-    ("nature", "Nature (0-24)", False, _range_check(0, 24)),
     ("gender", "Gender (0=M 1=F 2=N)", False, _set_check({0, 1, 2})),
-    ("ball", "Ball id (range-only)", False, _nonneg_check),
-    ("held_item", "Held Item id (range-only)", False, _nonneg_check),
 ]
 
 IV_FIELDS = [("iv_hp", "HP"), ("iv_atk", "Atk"), ("iv_def", "Def"), ("iv_spa", "SpA"), ("iv_spd", "SpD"), ("iv_spe", "Spe")]
@@ -249,32 +247,50 @@ class SpeciesPicker(ttk.Frame):
         self.picker.set_value(f"{number:03d}  {name}" if name else f"{number:03d}  (not in Z-A list)")
 
 
-class MovePicker(ttk.Frame):
-    """Search + results list over all real move names. Not filtered to what
-    any particular species can actually learn -- we don't have per-species
-    movepool data, so this confirms a move is real, not that this Pokemon
-    can legally know it."""
+class NameIdPicker(ttk.Frame):
+    """Generic searchable id<->name picker for a lookup module exposing
+    display_options()/name_for()/parse_selection() -- moves, natures, balls,
+    held items. Confirms the value is a real, named thing; not that it's
+    legal in whatever context it's used (no per-species/per-game filtering
+    unless the module itself provides it)."""
 
-    def __init__(self, parent: tk.Widget) -> None:
+    def __init__(self, parent: tk.Widget, module, pad: int, width: int = 16, list_height: int = 4) -> None:
         super().__init__(parent)
-        self.picker = SearchableList(self, moves_mod.display_options(), width=16, list_height=4)
+        self._module = module
+        self._pad = pad
+        self.picker = SearchableList(self, module.display_options(), width=width, list_height=list_height)
         self.picker.pack()
         self.picker.var.trace_add("write", self._revalidate)
 
     def _revalidate(self, *_args: object) -> None:
-        num = self.get_move_id()
-        ok = num == 0 or moves_mod.name_for(num) is not None
+        num = self.get_id()
+        ok = num == 0 or self._module.name_for(num) is not None
         self.picker.set_style("Valid.TEntry" if ok else "Invalid.TEntry")
 
-    def get_move_id(self) -> int:
-        return moves_mod.parse_selection(self.picker.var.get())
+    def get_id(self) -> int:
+        return self._module.parse_selection(self.picker.var.get())
 
-    def set_move_id(self, move_id: int) -> None:
-        if not move_id:
+    def set_id(self, value: int) -> None:
+        if not value:
             self.picker.set_value("")
             return
-        name = moves_mod.name_for(move_id)
-        self.picker.set_value(f"{move_id:03d}  {name}" if name else f"{move_id:03d}  (unknown move)")
+        name = self._module.name_for(value)
+        self.picker.set_value(f"{value:0{self._pad}d}  {name}" if name else f"{value:0{self._pad}d}  (unknown)")
+
+
+class MovePicker(NameIdPicker):
+    """Not filtered to what any particular species can actually learn -- we
+    don't have per-species movepool data, so this confirms a move is real,
+    not that this Pokemon can legally know it."""
+
+    def __init__(self, parent: tk.Widget) -> None:
+        super().__init__(parent, moves_mod, pad=3, width=16, list_height=4)
+
+    def get_move_id(self) -> int:
+        return self.get_id()
+
+    def set_move_id(self, move_id: int) -> None:
+        self.set_id(move_id)
 
 
 class AbilityPicker(ttk.Frame):
@@ -328,6 +344,41 @@ class AbilityPicker(ttk.Frame):
                 return
         name = abilities_mod.ABILITIES.get(ability_id, f"Ability id {ability_id}")
         self.picker.set_value(f"{name} (not legal for this species)")
+
+
+class NaturePicker(NameIdPicker):
+    """All 25 natures are always valid (0-24) -- this is a real, complete
+    list, not a range-only check."""
+
+    def __init__(self, parent: tk.Widget) -> None:
+        super().__init__(parent, stats_mod, pad=2, width=12, list_height=3)
+
+    def set_id(self, value: int) -> None:
+        # Unlike species/move/ability/ball/item, 0 is a real nature (Hardy),
+        # not "unset" -- the base class's falsy-value check would wrongly
+        # clear the field instead of showing it.
+        name = stats_mod.name_for(value)
+        self.picker.set_value(f"{value:02d}  {name}" if name else "")
+
+
+class BallPicker(NameIdPicker):
+    """Several ball names have more than one real item id across game
+    generations (mainline vs. Legends Arceus used different id ranges for
+    the same ball) -- Z-A is also a Legends title and we don't know which
+    numbering it uses, so all historical candidates are listed rather than
+    guessing one."""
+
+    def __init__(self, parent: tk.Widget) -> None:
+        super().__init__(parent, balls_mod, pad=4, width=14, list_height=3)
+
+
+class HeldItemPicker(NameIdPicker):
+    """Broad historical item list, not filtered to what Z-A actually has or
+    to what's sensible to hold (includes key items/machines) -- confirms a
+    real item name, not that it's a legal/sensible held item here."""
+
+    def __init__(self, parent: tk.Widget) -> None:
+        super().__init__(parent, items_mod, pad=4, width=15, list_height=3)
 
 
 class PokeHexApp(tk.Tk):
@@ -439,7 +490,20 @@ class PokeHexApp(tk.Tk):
         self.ability_picker.grid(row=0, column=5, sticky="w", pady=1)
         self.ability_picker.refresh_for_species(0)
 
-        self._build_field_grid(identity_frame, IDENTITY_FIELDS, start_row=1, columns=3)
+        ttk.Label(identity_frame, text="Nature").grid(row=1, column=0, sticky="nw", padx=(0, 4), pady=1)
+        self.nature_picker = NaturePicker(identity_frame)
+        self.nature_picker.grid(row=1, column=1, sticky="w", padx=(0, 12), pady=1)
+        self.nature_picker.picker.var.trace_add("write", self._on_stat_input_changed)
+
+        ttk.Label(identity_frame, text="Ball").grid(row=1, column=2, sticky="nw", padx=(0, 4), pady=1)
+        self.ball_picker = BallPicker(identity_frame)
+        self.ball_picker.grid(row=1, column=3, sticky="w", padx=(0, 12), pady=1)
+
+        ttk.Label(identity_frame, text="Held Item").grid(row=1, column=4, sticky="nw", padx=(0, 4), pady=1)
+        self.held_item_picker = HeldItemPicker(identity_frame)
+        self.held_item_picker.grid(row=1, column=5, sticky="w", pady=1)
+
+        self._build_field_grid(identity_frame, IDENTITY_FIELDS, start_row=2, columns=3)
 
         mid_row = ttk.Frame(right)
         mid_row.pack(side="top", fill="x", pady=6)
@@ -484,8 +548,9 @@ class PokeHexApp(tk.Tk):
 
         legend = ttk.Label(
             right,
-            text="Blue = passes the check we run, red = fails it. Ability is checked for real; ball/item ids "
-                 "and moves are range/existence checks only -- not full legality.",
+            text="Blue = passes the check we run, red = fails it. Ability/Nature are checked for real. "
+                 "Ball/Item confirm a real name (some balls have multiple ids across game generations -- "
+                 "we don't know which Z-A uses). Moves confirm a real name only, not this species' learnset.",
             style="Dim.TLabel", wraplength=640, justify="left",
         )
         legend.pack(side="top", fill="x", pady=(0, 2))
@@ -558,7 +623,7 @@ class PokeHexApp(tk.Tk):
             ivs = tuple(_get_int(self.fields[k]) for k, _ in IV_FIELDS)  # type: ignore[arg-type]
             evs = tuple(_get_int(self.fields[k]) for k, _ in EV_FIELDS)  # type: ignore[arg-type]
             level = max(1, min(100, _get_int(self.fields["level"])))  # type: ignore[arg-type]
-            nature = _get_int(self.fields["nature"])  # type: ignore[arg-type]
+            nature = self.nature_picker.get_id()
         except ValueError:
             return None
         return stats_mod.compute_stats(base, ivs, evs, level, nature)  # type: ignore[arg-type]
@@ -659,10 +724,10 @@ class PokeHexApp(tk.Tk):
         self.fields["original_trainer_name"].set(pkm.original_trainer_name)
         self.fields["tid16"].set(str(pkm.tid16))
         self.fields["sid16"].set(str(pkm.sid16))
-        self.fields["nature"].set(str(pkm.nature))
+        self.nature_picker.set_id(pkm.nature)
         self.fields["gender"].set(str(pkm.gender))
-        self.fields["ball"].set(str(pkm.ball))
-        self.fields["held_item"].set(str(pkm.held_item))
+        self.ball_picker.set_id(pkm.ball)
+        self.held_item_picker.set_id(pkm.held_item)
         self.fields["iv_hp"].set(str(pkm.iv_hp))
         self.fields["iv_atk"].set(str(pkm.iv_atk))
         self.fields["iv_def"].set(str(pkm.iv_def))
@@ -684,10 +749,10 @@ class PokeHexApp(tk.Tk):
         customize -- doesn't touch species/ability/moves, so you still choose those."""
         self.fields["form"].set("0")
         self.fields["level"].set("50")
-        self.fields["nature"].set("0")
+        self.nature_picker.set_id(0)  # Hardy
         self.fields["gender"].set("0")
-        self.fields["ball"].set("4")  # Poke Ball
-        self.fields["held_item"].set("0")
+        self.ball_picker.set_id(4)  # Poke Ball
+        self.held_item_picker.set_id(0)
         for key, _ in IV_FIELDS:
             self.fields[key].set("31")
         for key, _ in EV_FIELDS:
@@ -712,10 +777,10 @@ class PokeHexApp(tk.Tk):
         pkm.original_trainer_name = self.fields["original_trainer_name"].get()
         pkm.tid16 = _get_int(self.fields["tid16"])  # type: ignore[arg-type]
         pkm.sid16 = _get_int(self.fields["sid16"])  # type: ignore[arg-type]
-        pkm.nature = _get_int(self.fields["nature"])  # type: ignore[arg-type]
+        pkm.nature = self.nature_picker.get_id()
         pkm.gender = _get_int(self.fields["gender"])  # type: ignore[arg-type]
-        pkm.ball = _get_int(self.fields["ball"])  # type: ignore[arg-type]
-        pkm.held_item = _get_int(self.fields["held_item"])  # type: ignore[arg-type]
+        pkm.ball = self.ball_picker.get_id()
+        pkm.held_item = self.held_item_picker.get_id()
         pkm.iv_hp = _get_int(self.fields["iv_hp"])  # type: ignore[arg-type]
         pkm.iv_atk = _get_int(self.fields["iv_atk"])  # type: ignore[arg-type]
         pkm.iv_def = _get_int(self.fields["iv_def"])  # type: ignore[arg-type]
