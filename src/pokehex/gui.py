@@ -12,10 +12,11 @@ import shutil
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 
+from . import sprites, theme
 from .za.pa9 import PA9
 from .za.save import BOX_COUNT, SLOTS_PER_BOX, SAV9ZA
 
-FIELD_SPECS: list[tuple[str, str, bool]] = [
+IDENTITY_FIELDS: list[tuple[str, str, bool]] = [
     ("species", "Species (Dex #)", False),
     ("form", "Form", False),
     ("level", "Level", False),
@@ -29,38 +30,29 @@ FIELD_SPECS: list[tuple[str, str, bool]] = [
     ("gender", "Gender (0=M 1=F 2=N)", False),
     ("ball", "Ball ID", False),
     ("held_item", "Held Item ID", False),
-    ("iv_hp", "IV HP", False),
-    ("iv_atk", "IV Atk", False),
-    ("iv_def", "IV Def", False),
-    ("iv_spa", "IV SpA", False),
-    ("iv_spd", "IV SpD", False),
-    ("iv_spe", "IV Spe", False),
-    ("ev_hp", "EV HP", False),
-    ("ev_atk", "EV Atk", False),
-    ("ev_def", "EV Def", False),
-    ("ev_spa", "EV SpA", False),
-    ("ev_spd", "EV SpD", False),
-    ("ev_spe", "EV Spe", False),
-    ("move1", "Move 1 ID", False),
-    ("move2", "Move 2 ID", False),
-    ("move3", "Move 3 ID", False),
-    ("move4", "Move 4 ID", False),
 ]
+
+IV_FIELDS = [("iv_hp", "HP"), ("iv_atk", "Atk"), ("iv_def", "Def"), ("iv_spa", "SpA"), ("iv_spd", "SpD"), ("iv_spe", "Spe")]
+EV_FIELDS = [("ev_hp", "HP"), ("ev_atk", "Atk"), ("ev_def", "Def"), ("ev_spa", "SpA"), ("ev_spd", "SpD"), ("ev_spe", "Spe")]
+MOVE_FIELDS = [("move1", "Move 1"), ("move2", "Move 2"), ("move3", "Move 3"), ("move4", "Move 4")]
 
 
 class PokeHexApp(tk.Tk):
     def __init__(self) -> None:
         super().__init__()
         self.title("PokeHex")
-        self.geometry("920x560")
+        self.geometry("1040x620")
+        theme.apply(self)
 
         self.sav: SAV9ZA | None = None
         self.save_path: str | None = None
         self.current_box = 0
         self.current_slot: int | None = None
         self.fields: dict[str, tk.Variable] = {}
+        self._sprite_image = None  # keep a reference so Tk doesn't garbage-collect it
 
         self._build_menu()
+        self._build_header()
         self._build_layout()
 
     # -- layout ---------------------------------------------------------
@@ -75,39 +67,99 @@ class PokeHexApp(tk.Tk):
         menubar.add_cascade(label="File", menu=file_menu)
         self.config(menu=menubar)
 
+    def _build_header(self) -> None:
+        header = tk.Frame(self, bg=theme.BG)
+        header.pack(side="top", fill="x")
+        canvas = tk.Canvas(header, width=280, height=64, bg=theme.BG, highlightthickness=0)
+        canvas.pack(side="left", padx=12, pady=8)
+        theme.draw_logo(canvas)
+        ttk.Separator(self, orient="horizontal").pack(side="top", fill="x")
+
     def _build_layout(self) -> None:
-        left = ttk.Frame(self, padding=8)
+        body = ttk.Frame(self)
+        body.pack(side="top", fill="both", expand=True)
+
+        left = ttk.Frame(body, style="Panel.TFrame", padding=8)
         left.pack(side="left", fill="y")
 
-        ttk.Label(left, text="Box (1-32)").pack(anchor="w")
+        ttk.Label(left, text="BOX (1-32)", style="Panel.TLabel", font=theme.FONT_MONO_BOLD).pack(anchor="w")
         self.box_var = tk.IntVar(value=1)
         ttk.Spinbox(
-            left, from_=1, to=BOX_COUNT, textvariable=self.box_var, width=5,
-            command=self.refresh_slot_list,
-        ).pack(anchor="w", pady=(0, 8))
+            left, from_=1, to=BOX_COUNT, textvariable=self.box_var, width=5, command=self.refresh_slot_list,
+        ).pack(anchor="w", pady=(2, 8))
 
-        self.slot_list = tk.Listbox(left, width=30, height=30, font=("Menlo", 11))
+        self.slot_list = tk.Listbox(
+            left, width=30, height=30, font=theme.FONT_MONO,
+            bg=theme.PANEL_ALT, fg=theme.FG, selectbackground=theme.ACCENT_DIM,
+            selectforeground=theme.BG, highlightthickness=1, highlightbackground=theme.BORDER,
+            relief="flat", borderwidth=0,
+        )
         self.slot_list.pack(fill="y", expand=True)
         self.slot_list.bind("<<ListboxSelect>>", self.on_slot_select)
 
-        right = ttk.Frame(self, padding=8)
+        right = ttk.Frame(body, padding=(12, 8))
         right.pack(side="left", fill="both", expand=True)
 
-        for row, (key, label, is_str) in enumerate(FIELD_SPECS):
-            ttk.Label(right, text=label).grid(row=row, column=0, sticky="w", pady=2)
-            var: tk.Variable = tk.StringVar() if is_str else tk.IntVar(value=0)
-            ttk.Entry(right, textvariable=var, width=24).grid(row=row, column=1, sticky="w", pady=2, padx=(8, 0))
-            self.fields[key] = var
+        top_row = ttk.Frame(right)
+        top_row.pack(side="top", fill="x")
 
-        btn_row = len(FIELD_SPECS) + 1
+        self.sprite_canvas = tk.Canvas(top_row, width=96, height=96, highlightthickness=0)
+        self.sprite_canvas.pack(side="left", padx=(0, 16))
+        theme.draw_sprite_placeholder(self.sprite_canvas)
+
+        identity_frame = ttk.Labelframe(top_row, text="IDENTITY", padding=8)
+        identity_frame.pack(side="left", fill="both", expand=True)
+        self._build_field_grid(identity_frame, IDENTITY_FIELDS)
+
+        mid_row = ttk.Frame(right)
+        mid_row.pack(side="top", fill="x", pady=8)
+
+        iv_frame = ttk.Labelframe(mid_row, text="IVs", padding=8)
+        iv_frame.pack(side="left", fill="both", expand=True, padx=(0, 6))
+        self._build_stat_row(iv_frame, IV_FIELDS)
+
+        ev_frame = ttk.Labelframe(mid_row, text="EVs", padding=8)
+        ev_frame.pack(side="left", fill="both", expand=True, padx=6)
+        self._build_stat_row(ev_frame, EV_FIELDS)
+
+        move_frame = ttk.Labelframe(right, text="MOVES", padding=8)
+        move_frame.pack(side="top", fill="x", pady=(0, 8))
+        self._build_move_row(move_frame)
+
         btn_frame = ttk.Frame(right)
-        btn_frame.grid(row=btn_row, column=0, columnspan=2, pady=12, sticky="w")
-        ttk.Button(btn_frame, text="Apply to Slot", command=self.apply_to_slot).pack(side="left", padx=4)
-        ttk.Button(btn_frame, text="Make Shiny", command=self.make_shiny).pack(side="left", padx=4)
-        ttk.Button(btn_frame, text="Clear Slot", command=self.clear_slot).pack(side="left", padx=4)
+        btn_frame.pack(side="top", fill="x", pady=4)
+        ttk.Button(btn_frame, text="Apply to Slot", command=self.apply_to_slot).pack(side="left", padx=(0, 6))
+        ttk.Button(btn_frame, text="Make Shiny", command=self.make_shiny).pack(side="left", padx=6)
+        ttk.Button(btn_frame, text="Clear Slot", command=self.clear_slot).pack(side="left", padx=6)
 
         self.status_var = tk.StringVar(value="Open a save file to begin.")
-        ttk.Label(self, textvariable=self.status_var, anchor="w", padding=4).pack(side="bottom", fill="x")
+        status_bar = tk.Label(
+            self, textvariable=self.status_var, anchor="w", bg=theme.PANEL, fg=theme.FG_DIM,
+            font=theme.FONT_MONO, padx=8, pady=4,
+        )
+        status_bar.pack(side="bottom", fill="x")
+
+    def _build_field_grid(self, parent: ttk.Frame, specs: list[tuple[str, str, bool]]) -> None:
+        for i, (key, label, is_str) in enumerate(specs):
+            row, col = divmod(i, 2)
+            ttk.Label(parent, text=label).grid(row=row, column=col * 2, sticky="w", padx=(0, 4), pady=2)
+            var: tk.Variable = tk.StringVar() if is_str else tk.IntVar(value=0)
+            ttk.Entry(parent, textvariable=var, width=14).grid(row=row, column=col * 2 + 1, sticky="w", padx=(0, 16), pady=2)
+            self.fields[key] = var
+
+    def _build_stat_row(self, parent: ttk.Frame, specs: list[tuple[str, str]]) -> None:
+        for i, (key, label) in enumerate(specs):
+            ttk.Label(parent, text=label).grid(row=0, column=i, padx=4)
+            var = tk.IntVar(value=0)
+            ttk.Entry(parent, textvariable=var, width=5).grid(row=1, column=i, padx=4)
+            self.fields[key] = var
+
+    def _build_move_row(self, parent: ttk.Frame) -> None:
+        for i, (key, label) in enumerate(MOVE_FIELDS):
+            ttk.Label(parent, text=label).grid(row=0, column=i, padx=6)
+            var = tk.IntVar(value=0)
+            ttk.Entry(parent, textvariable=var, width=10).grid(row=1, column=i, padx=6)
+            self.fields[key] = var
 
     # -- file ops ---------------------------------------------------------
     def open_save(self) -> None:
@@ -172,6 +224,18 @@ class PokeHexApp(tk.Tk):
         self.current_slot = selection[0]
         pkm = self.sav.get_box_slot(self.current_box, self.current_slot)
         self._load_form_from_pkm(pkm)
+        self._refresh_sprite(pkm.species)
+
+    def _refresh_sprite(self, species: int) -> None:
+        image = sprites.load_sprite(species, size=96) if species else None
+        if image is not None:
+            self._sprite_image = image
+            self.sprite_canvas.delete("all")
+            self.sprite_canvas.configure(bg=theme.PANEL_ALT, highlightthickness=1, highlightbackground=theme.BORDER)
+            self.sprite_canvas.create_image(48, 48, image=image)
+        else:
+            self._sprite_image = None
+            theme.draw_sprite_placeholder(self.sprite_canvas)
 
     def _load_form_from_pkm(self, pkm: PA9) -> None:
         self.fields["species"].set(pkm.species)
@@ -259,6 +323,7 @@ class PokeHexApp(tk.Tk):
             return
         self.sav.set_box_slot(self.current_box, self.current_slot, pkm)
         self.refresh_slot_list()
+        self._refresh_sprite(pkm.species)
         self.status_var.set(
             f"Applied to Box {self.current_box + 1} Slot {self.current_slot + 1} "
             "(not written to disk yet -- use File > Save)"
@@ -288,6 +353,7 @@ class PokeHexApp(tk.Tk):
             return
         self.sav.set_box_slot(self.current_box, self.current_slot, PA9())
         self.refresh_slot_list()
+        theme.draw_sprite_placeholder(self.sprite_canvas)
         self.status_var.set(f"Cleared Box {self.current_box + 1} Slot {self.current_slot + 1}")
 
 
