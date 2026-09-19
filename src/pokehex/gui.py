@@ -11,32 +11,77 @@ import random
 import shutil
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
+from typing import Callable
 
 from . import sprites, theme
 from .za import species
 from .za.pa9 import PA9
 from .za.save import BOX_COUNT, SLOTS_PER_BOX, SAV9ZA
 
-IDENTITY_FIELDS: list[tuple[str, str, bool]] = [
-    ("form", "Form", False),
-    ("level", "Level", False),
-    ("nickname", "Nickname", True),
-    ("original_trainer_name", "OT Name", True),
-    ("tid16", "TID", False),
-    ("sid16", "SID", False),
-    ("nature", "Nature (0-24)", False),
-    ("ability", "Ability (id)", False),
-    ("ability_number", "Ability Slot (0/1/2/4)", False),
-    ("gender", "Gender (0=M 1=F 2=N)", False),
-    ("ball", "Ball ID", False),
-    ("held_item", "Held Item ID", False),
+Validator = Callable[[str], bool]
+
+
+def _range_check(lo: int, hi: int) -> Validator:
+    def check(text: str) -> bool:
+        try:
+            return lo <= int(text) <= hi
+        except ValueError:
+            return False
+    return check
+
+
+def _set_check(values: set[int]) -> Validator:
+    def check(text: str) -> bool:
+        try:
+            return int(text) in values
+        except ValueError:
+            return False
+    return check
+
+
+def _nonneg_check(text: str) -> bool:
+    try:
+        return int(text) >= 0
+    except ValueError:
+        return False
+
+
+def _len_check(n: int) -> Validator:
+    def check(text: str) -> bool:
+        return len(text) <= n
+    return check
+
+
+# (key, label, is_string, validator). Fields marked "range-only" below have
+# no ported legality data (we don't have ability/ball/item/move tables) --
+# they only confirm "well-formed non-negative number," not true legality.
+IDENTITY_FIELDS: list[tuple[str, str, bool, Validator | None]] = [
+    ("form", "Form", False, _nonneg_check),
+    ("level", "Level (1-100)", False, _range_check(1, 100)),
+    ("nickname", "Nickname (<=12 ch)", True, _len_check(12)),
+    ("original_trainer_name", "OT Name (<=12 ch)", True, _len_check(12)),
+    ("tid16", "TID (0-65535)", False, _range_check(0, 65535)),
+    ("sid16", "SID (0-65535)", False, _range_check(0, 65535)),
+    ("nature", "Nature (0-24)", False, _range_check(0, 24)),
+    ("ability", "Ability id (range-only)", False, _nonneg_check),
+    ("ability_number", "Ability Slot (0/1/2/4)", False, _set_check({0, 1, 2, 4})),
+    ("gender", "Gender (0=M 1=F 2=N)", False, _set_check({0, 1, 2})),
+    ("ball", "Ball id (range-only)", False, _nonneg_check),
+    ("held_item", "Held Item id (range-only)", False, _nonneg_check),
 ]
 
 IV_FIELDS = [("iv_hp", "HP"), ("iv_atk", "Atk"), ("iv_def", "Def"), ("iv_spa", "SpA"), ("iv_spd", "SpD"), ("iv_spe", "Spe")]
 EV_FIELDS = [("ev_hp", "HP"), ("ev_atk", "Atk"), ("ev_def", "Def"), ("ev_spa", "SpA"), ("ev_spd", "SpD"), ("ev_spe", "Spe")]
 MOVE_FIELDS = [("move1", "Move 1"), ("move2", "Move 2"), ("move3", "Move 3"), ("move4", "Move 4")]
+MOVE_VALIDATOR = _range_check(0, 1000)  # sanity bound only, not a real max-move-id table
+EV_MAX_TOTAL = 510
 
 _ALL_SPECIES_OPTIONS = species.display_options()
+
+
+def _get_int(var: tk.StringVar, default: int = 0) -> int:
+    text = var.get().strip()
+    return default if not text else int(text)
 
 
 class SpeciesPicker(ttk.Frame):
@@ -48,9 +93,10 @@ class SpeciesPicker(ttk.Frame):
     def __init__(self, parent: tk.Widget) -> None:
         super().__init__(parent)
         self.var = tk.StringVar()
-        self.combo = ttk.Combobox(self, textvariable=self.var, values=_ALL_SPECIES_OPTIONS, width=22)
+        self.combo = ttk.Combobox(self, textvariable=self.var, values=_ALL_SPECIES_OPTIONS, width=22, style="Invalid.TCombobox")
         self.combo.pack()
         self.combo.bind("<KeyRelease>", self._on_keyrelease)
+        self.var.trace_add("write", self._revalidate)
 
     def _on_keyrelease(self, event: tk.Event) -> None:
         if event.keysym in ("Up", "Down", "Return", "Escape", "Tab"):
@@ -60,6 +106,10 @@ class SpeciesPicker(ttk.Frame):
             self.combo["values"] = _ALL_SPECIES_OPTIONS
         else:
             self.combo["values"] = [o for o in _ALL_SPECIES_OPTIONS if typed in o.lower()]
+
+    def _revalidate(self, *_args: object) -> None:
+        ok = bool(self.get_species_number()) and species.name_for(self.get_species_number()) is not None
+        self.combo.configure(style="Valid.TCombobox" if ok else "Invalid.TCombobox")
 
     def get_species_number(self) -> int:
         return species.parse_selection(self.var.get())
@@ -79,7 +129,6 @@ class PokeHexApp(tk.Tk):
     def __init__(self) -> None:
         super().__init__()
         self.title("PokeHex")
-        self.geometry("1040x620")
         theme.apply(self)
 
         self.sav: SAV9ZA | None = None
@@ -87,11 +136,24 @@ class PokeHexApp(tk.Tk):
         self.current_box = 0
         self.current_slot: int | None = None
         self.fields: dict[str, tk.Variable] = {}
+        self.field_widgets: dict[str, ttk.Entry] = {}
         self._sprite_image = None  # keep a reference so Tk doesn't garbage-collect it
 
         self._build_menu()
         self._build_header()
+        self._build_toolbar()
         self._build_layout()
+        self._fit_window()
+
+    # -- window sizing ----------------------------------------------------
+    def _fit_window(self) -> None:
+        self.update_idletasks()
+        width = self.winfo_reqwidth()
+        height = self.winfo_reqheight()
+        x = max(0, (self.winfo_screenwidth() - width) // 2)
+        y = max(0, (self.winfo_screenheight() - height) // 3)
+        self.geometry(f"{width}x{height}+{x}+{y}")
+        self.minsize(width, height)
 
     # -- layout ---------------------------------------------------------
     def _build_menu(self) -> None:
@@ -111,6 +173,14 @@ class PokeHexApp(tk.Tk):
         canvas = tk.Canvas(header, width=280, height=64, bg=theme.BG, highlightthickness=0)
         canvas.pack(side="left", padx=12, pady=8)
         theme.draw_logo(canvas)
+        ttk.Separator(self, orient="horizontal").pack(side="top", fill="x")
+
+    def _build_toolbar(self) -> None:
+        toolbar = ttk.Frame(self, padding=(12, 6))
+        toolbar.pack(side="top", fill="x")
+        ttk.Button(toolbar, text="Open Save...", command=self.open_save).pack(side="left", padx=(0, 6))
+        ttk.Button(toolbar, text="Save", command=self.save_in_place).pack(side="left", padx=6)
+        ttk.Button(toolbar, text="Save As...", command=self.save_as).pack(side="left", padx=6)
         ttk.Separator(self, orient="horizontal").pack(side="top", fill="x")
 
     def _build_layout(self) -> None:
@@ -157,23 +227,37 @@ class PokeHexApp(tk.Tk):
         mid_row = ttk.Frame(right)
         mid_row.pack(side="top", fill="x", pady=8)
 
-        iv_frame = ttk.Labelframe(mid_row, text="IVs", padding=8)
+        iv_frame = ttk.Labelframe(mid_row, text="IVs (0-31)", padding=8)
         iv_frame.pack(side="left", fill="both", expand=True, padx=(0, 6))
-        self._build_stat_row(iv_frame, IV_FIELDS)
+        self._build_stat_row(iv_frame, IV_FIELDS, _range_check(0, 31))
 
-        ev_frame = ttk.Labelframe(mid_row, text="EVs", padding=8)
+        ev_frame = ttk.Labelframe(mid_row, text="EVs (0-252 each)", padding=8)
         ev_frame.pack(side="left", fill="both", expand=True, padx=6)
-        self._build_stat_row(ev_frame, EV_FIELDS)
+        self._build_stat_row(ev_frame, EV_FIELDS, _range_check(0, 252))
+        self.ev_total_var = tk.StringVar(value=f"Total: 0/{EV_MAX_TOTAL}")
+        self.ev_total_label = ttk.Label(ev_frame, textvariable=self.ev_total_var)
+        self.ev_total_label.grid(row=2, column=0, columnspan=len(EV_FIELDS), sticky="w", pady=(4, 0))
+        for key, _ in EV_FIELDS:
+            self.fields[key].trace_add("write", self._update_ev_total)
 
-        move_frame = ttk.Labelframe(right, text="MOVES", padding=8)
+        move_frame = ttk.Labelframe(right, text="MOVES (range-only check)", padding=8)
         move_frame.pack(side="top", fill="x", pady=(0, 8))
         self._build_move_row(move_frame)
 
         btn_frame = ttk.Frame(right)
         btn_frame.pack(side="top", fill="x", pady=4)
-        ttk.Button(btn_frame, text="Apply to Slot", command=self.apply_to_slot).pack(side="left", padx=(0, 6))
+        ttk.Button(btn_frame, text="Fill Smart Defaults", command=self.fill_smart_defaults).pack(side="left", padx=(0, 6))
+        ttk.Button(btn_frame, text="Apply to Slot", command=self.apply_to_slot).pack(side="left", padx=6)
         ttk.Button(btn_frame, text="Make Shiny", command=self.make_shiny).pack(side="left", padx=6)
         ttk.Button(btn_frame, text="Clear Slot", command=self.clear_slot).pack(side="left", padx=6)
+
+        legend = ttk.Label(
+            right,
+            text="Blue = passes the check we run. Red = fails it. For ability/ball/item/move ids that only "
+                 "means \"well-formed number\" -- we don't have those legality tables ported.",
+            style="Dim.TLabel", wraplength=520, justify="left",
+        )
+        legend.pack(side="top", fill="x", pady=(0, 4))
 
         self.status_var = tk.StringVar(value="Open a save file to begin.")
         status_bar = tk.Label(
@@ -182,28 +266,50 @@ class PokeHexApp(tk.Tk):
         )
         status_bar.pack(side="bottom", fill="x")
 
-    def _build_field_grid(self, parent: ttk.Frame, specs: list[tuple[str, str, bool]], start_row: int = 0) -> None:
-        for i, (key, label, is_str) in enumerate(specs):
+    def _make_entry(self, parent: ttk.Frame, key: str, var: tk.Variable, validator: Validator | None, width: int) -> ttk.Entry:
+        entry = ttk.Entry(parent, textvariable=var, width=width, style="Valid.TEntry")
+        self.field_widgets[key] = entry
+        if validator is not None:
+            def on_change(*_args: object, _var=var, _entry=entry, _check=validator) -> None:
+                _entry.configure(style="Valid.TEntry" if _check(_var.get()) else "Invalid.TEntry")
+            var.trace_add("write", on_change)
+            on_change()
+        return entry
+
+    def _build_field_grid(self, parent: ttk.Frame, specs: list[tuple[str, str, bool, Validator | None]], start_row: int = 0) -> None:
+        for i, (key, label, is_str, validator) in enumerate(specs):
             row, col = divmod(i, 2)
             row += start_row
             ttk.Label(parent, text=label).grid(row=row, column=col * 2, sticky="w", padx=(0, 4), pady=2)
-            var: tk.Variable = tk.StringVar() if is_str else tk.IntVar(value=0)
-            ttk.Entry(parent, textvariable=var, width=14).grid(row=row, column=col * 2 + 1, sticky="w", padx=(0, 16), pady=2)
+            var: tk.Variable = tk.StringVar(value="") if is_str else tk.StringVar(value="0")
             self.fields[key] = var
+            self._make_entry(parent, key, var, validator, width=16).grid(
+                row=row, column=col * 2 + 1, sticky="w", padx=(0, 16), pady=2,
+            )
 
-    def _build_stat_row(self, parent: ttk.Frame, specs: list[tuple[str, str]]) -> None:
+    def _build_stat_row(self, parent: ttk.Frame, specs: list[tuple[str, str]], validator: Validator) -> None:
         for i, (key, label) in enumerate(specs):
             ttk.Label(parent, text=label).grid(row=0, column=i, padx=4)
-            var = tk.IntVar(value=0)
-            ttk.Entry(parent, textvariable=var, width=5).grid(row=1, column=i, padx=4)
+            var = tk.StringVar(value="0")
             self.fields[key] = var
+            self._make_entry(parent, key, var, validator, width=5).grid(row=1, column=i, padx=4)
 
     def _build_move_row(self, parent: ttk.Frame) -> None:
         for i, (key, label) in enumerate(MOVE_FIELDS):
             ttk.Label(parent, text=label).grid(row=0, column=i, padx=6)
-            var = tk.IntVar(value=0)
-            ttk.Entry(parent, textvariable=var, width=10).grid(row=1, column=i, padx=6)
+            var = tk.StringVar(value="0")
             self.fields[key] = var
+            self._make_entry(parent, key, var, MOVE_VALIDATOR, width=10).grid(row=1, column=i, padx=6)
+
+    def _update_ev_total(self, *_args: object) -> None:
+        total = 0
+        for key, _ in EV_FIELDS:
+            try:
+                total += _get_int(self.fields[key])  # type: ignore[arg-type]
+            except ValueError:
+                pass
+        self.ev_total_var.set(f"Total: {total}/{EV_MAX_TOTAL}")
+        self.ev_total_label.configure(foreground=theme.VALID if total <= EV_MAX_TOTAL else theme.INVALID)
 
     # -- file ops ---------------------------------------------------------
     def open_save(self) -> None:
@@ -271,8 +377,8 @@ class PokeHexApp(tk.Tk):
         self._load_form_from_pkm(pkm)
         self._refresh_sprite(pkm.species)
 
-    def _refresh_sprite(self, species: int) -> None:
-        image = sprites.load_sprite(species, size=96) if species else None
+    def _refresh_sprite(self, species_number: int) -> None:
+        image = sprites.load_sprite(species_number, size=96) if species_number else None
         if image is not None:
             self._sprite_image = image
             self.sprite_canvas.delete("all")
@@ -284,34 +390,52 @@ class PokeHexApp(tk.Tk):
 
     def _load_form_from_pkm(self, pkm: PA9) -> None:
         self.species_picker.set_species_number(pkm.species)
-        self.fields["form"].set(pkm.form)
-        self.fields["level"].set(pkm.stat_level)
+        self.fields["form"].set(str(pkm.form))
+        self.fields["level"].set(str(pkm.stat_level))
         self.fields["nickname"].set(pkm.nickname)
         self.fields["original_trainer_name"].set(pkm.original_trainer_name)
-        self.fields["tid16"].set(pkm.tid16)
-        self.fields["sid16"].set(pkm.sid16)
-        self.fields["nature"].set(pkm.nature)
-        self.fields["ability"].set(pkm.ability)
-        self.fields["ability_number"].set(pkm.ability_number)
-        self.fields["gender"].set(pkm.gender)
-        self.fields["ball"].set(pkm.ball)
-        self.fields["held_item"].set(pkm.held_item)
-        self.fields["iv_hp"].set(pkm.iv_hp)
-        self.fields["iv_atk"].set(pkm.iv_atk)
-        self.fields["iv_def"].set(pkm.iv_def)
-        self.fields["iv_spa"].set(pkm.iv_spa)
-        self.fields["iv_spd"].set(pkm.iv_spd)
-        self.fields["iv_spe"].set(pkm.iv_spe)
-        self.fields["ev_hp"].set(pkm.ev_hp)
-        self.fields["ev_atk"].set(pkm.ev_atk)
-        self.fields["ev_def"].set(pkm.ev_def)
-        self.fields["ev_spa"].set(pkm.ev_spa)
-        self.fields["ev_spd"].set(pkm.ev_spd)
-        self.fields["ev_spe"].set(pkm.ev_spe)
-        self.fields["move1"].set(pkm.move(0))
-        self.fields["move2"].set(pkm.move(1))
-        self.fields["move3"].set(pkm.move(2))
-        self.fields["move4"].set(pkm.move(3))
+        self.fields["tid16"].set(str(pkm.tid16))
+        self.fields["sid16"].set(str(pkm.sid16))
+        self.fields["nature"].set(str(pkm.nature))
+        self.fields["ability"].set(str(pkm.ability))
+        self.fields["ability_number"].set(str(pkm.ability_number))
+        self.fields["gender"].set(str(pkm.gender))
+        self.fields["ball"].set(str(pkm.ball))
+        self.fields["held_item"].set(str(pkm.held_item))
+        self.fields["iv_hp"].set(str(pkm.iv_hp))
+        self.fields["iv_atk"].set(str(pkm.iv_atk))
+        self.fields["iv_def"].set(str(pkm.iv_def))
+        self.fields["iv_spa"].set(str(pkm.iv_spa))
+        self.fields["iv_spd"].set(str(pkm.iv_spd))
+        self.fields["iv_spe"].set(str(pkm.iv_spe))
+        self.fields["ev_hp"].set(str(pkm.ev_hp))
+        self.fields["ev_atk"].set(str(pkm.ev_atk))
+        self.fields["ev_def"].set(str(pkm.ev_def))
+        self.fields["ev_spa"].set(str(pkm.ev_spa))
+        self.fields["ev_spd"].set(str(pkm.ev_spd))
+        self.fields["ev_spe"].set(str(pkm.ev_spe))
+        self.fields["move1"].set(str(pkm.move(0)))
+        self.fields["move2"].set(str(pkm.move(1)))
+        self.fields["move3"].set(str(pkm.move(2)))
+        self.fields["move4"].set(str(pkm.move(3)))
+
+    def fill_smart_defaults(self) -> None:
+        """Fills the form with sensible, legally-shaped values you can then
+        customize -- doesn't touch species, so you still choose that."""
+        self.fields["form"].set("0")
+        self.fields["level"].set("50")
+        self.fields["nature"].set("0")
+        self.fields["ability_number"].set("0")
+        self.fields["gender"].set("0")
+        self.fields["ball"].set("4")  # Poke Ball
+        self.fields["held_item"].set("0")
+        for key, _ in IV_FIELDS:
+            self.fields[key].set("31")
+        for key, _ in EV_FIELDS:
+            self.fields[key].set("0")
+        for key, _ in MOVE_FIELDS:
+            self.fields[key].set("0")
+        self.status_var.set("Smart defaults filled in -- pick a species, then customize as needed.")
 
     def _build_pkm_from_form(self, pkm: PA9) -> PA9:
         if pkm.pid == 0:
@@ -320,36 +444,36 @@ class PokeHexApp(tk.Tk):
             pkm.encryption_constant = random.getrandbits(32)
 
         pkm.species = self.species_picker.get_species_number()
-        pkm.form = self.fields["form"].get()
-        level = max(1, min(100, self.fields["level"].get()))
+        pkm.form = _get_int(self.fields["form"])  # type: ignore[arg-type]
+        level = max(1, min(100, _get_int(self.fields["level"])))  # type: ignore[arg-type]
         pkm.stat_level = level
         pkm.met_level = level
         pkm.nickname = self.fields["nickname"].get()
         pkm.original_trainer_name = self.fields["original_trainer_name"].get()
-        pkm.tid16 = self.fields["tid16"].get()
-        pkm.sid16 = self.fields["sid16"].get()
-        pkm.nature = self.fields["nature"].get()
-        pkm.ability = self.fields["ability"].get()
-        pkm.ability_number = self.fields["ability_number"].get()
-        pkm.gender = self.fields["gender"].get()
-        pkm.ball = self.fields["ball"].get()
-        pkm.held_item = self.fields["held_item"].get()
-        pkm.iv_hp = self.fields["iv_hp"].get()
-        pkm.iv_atk = self.fields["iv_atk"].get()
-        pkm.iv_def = self.fields["iv_def"].get()
-        pkm.iv_spa = self.fields["iv_spa"].get()
-        pkm.iv_spd = self.fields["iv_spd"].get()
-        pkm.iv_spe = self.fields["iv_spe"].get()
-        pkm.ev_hp = self.fields["ev_hp"].get()
-        pkm.ev_atk = self.fields["ev_atk"].get()
-        pkm.ev_def = self.fields["ev_def"].get()
-        pkm.ev_spa = self.fields["ev_spa"].get()
-        pkm.ev_spd = self.fields["ev_spd"].get()
-        pkm.ev_spe = self.fields["ev_spe"].get()
-        pkm.set_move(0, self.fields["move1"].get())
-        pkm.set_move(1, self.fields["move2"].get())
-        pkm.set_move(2, self.fields["move3"].get())
-        pkm.set_move(3, self.fields["move4"].get())
+        pkm.tid16 = _get_int(self.fields["tid16"])  # type: ignore[arg-type]
+        pkm.sid16 = _get_int(self.fields["sid16"])  # type: ignore[arg-type]
+        pkm.nature = _get_int(self.fields["nature"])  # type: ignore[arg-type]
+        pkm.ability = _get_int(self.fields["ability"])  # type: ignore[arg-type]
+        pkm.ability_number = _get_int(self.fields["ability_number"])  # type: ignore[arg-type]
+        pkm.gender = _get_int(self.fields["gender"])  # type: ignore[arg-type]
+        pkm.ball = _get_int(self.fields["ball"])  # type: ignore[arg-type]
+        pkm.held_item = _get_int(self.fields["held_item"])  # type: ignore[arg-type]
+        pkm.iv_hp = _get_int(self.fields["iv_hp"])  # type: ignore[arg-type]
+        pkm.iv_atk = _get_int(self.fields["iv_atk"])  # type: ignore[arg-type]
+        pkm.iv_def = _get_int(self.fields["iv_def"])  # type: ignore[arg-type]
+        pkm.iv_spa = _get_int(self.fields["iv_spa"])  # type: ignore[arg-type]
+        pkm.iv_spd = _get_int(self.fields["iv_spd"])  # type: ignore[arg-type]
+        pkm.iv_spe = _get_int(self.fields["iv_spe"])  # type: ignore[arg-type]
+        pkm.ev_hp = _get_int(self.fields["ev_hp"])  # type: ignore[arg-type]
+        pkm.ev_atk = _get_int(self.fields["ev_atk"])  # type: ignore[arg-type]
+        pkm.ev_def = _get_int(self.fields["ev_def"])  # type: ignore[arg-type]
+        pkm.ev_spa = _get_int(self.fields["ev_spa"])  # type: ignore[arg-type]
+        pkm.ev_spd = _get_int(self.fields["ev_spd"])  # type: ignore[arg-type]
+        pkm.ev_spe = _get_int(self.fields["ev_spe"])  # type: ignore[arg-type]
+        pkm.set_move(0, _get_int(self.fields["move1"]))  # type: ignore[arg-type]
+        pkm.set_move(1, _get_int(self.fields["move2"]))  # type: ignore[arg-type]
+        pkm.set_move(2, _get_int(self.fields["move3"]))  # type: ignore[arg-type]
+        pkm.set_move(3, _get_int(self.fields["move4"]))  # type: ignore[arg-type]
         for i in range(4):
             if pkm.move(i) != 0 and pkm.move_pp(i) == 0:
                 pkm.set_move_pp(i, 1)
@@ -366,13 +490,19 @@ class PokeHexApp(tk.Tk):
         except (ValueError, tk.TclError) as exc:
             messagebox.showerror("Invalid field value", str(exc))
             return
+        ev_total = pkm.ev_hp + pkm.ev_atk + pkm.ev_def + pkm.ev_spa + pkm.ev_spd + pkm.ev_spe
+        warnings = []
+        if not species.name_for(pkm.species):
+            warnings.append("species not in the Z-A list")
+        if ev_total > EV_MAX_TOTAL:
+            warnings.append(f"EV total {ev_total} exceeds {EV_MAX_TOTAL}")
         self.sav.set_box_slot(self.current_box, self.current_slot, pkm)
         self.refresh_slot_list()
         self._refresh_sprite(pkm.species)
-        warning = "" if species.name_for(pkm.species) else "  [!] species not in the Z-A list -- verify it in-game"
+        suffix = f"  [!] {'; '.join(warnings)}" if warnings else ""
         self.status_var.set(
             f"Applied to Box {self.current_box + 1} Slot {self.current_slot + 1} "
-            f"(not written to disk yet -- use File > Save){warning}"
+            f"(not written to disk yet -- use File > Save){suffix}"
         )
 
     def make_shiny(self) -> None:

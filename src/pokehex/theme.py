@@ -16,6 +16,8 @@ FG_DIM = "#8a97a6"
 ACCENT = "#4fd1c5"
 ACCENT_DIM = "#2f8f86"
 WARN = "#e3b23c"
+VALID = "#4da6ff"
+INVALID = "#ff5c5c"
 
 FONT_MONO = ("Menlo", 11)
 FONT_MONO_BOLD = ("Menlo", 11, "bold")
@@ -63,6 +65,16 @@ def apply(root: tk.Tk) -> None:
         "TSpinbox", fieldbackground=PANEL_ALT, foreground=FG, insertcolor=ACCENT,
         arrowcolor=ACCENT, bordercolor=BORDER,
     )
+
+    # Live field validation: blue = passes the check we actually run, red =
+    # fails it. For fields with no ported legality data (ability/ball/item/
+    # move ids), this only confirms "well-formed number" -- not true legality.
+    style.configure("Valid.TEntry", fieldbackground=PANEL_ALT, foreground=VALID, insertcolor=VALID, bordercolor=VALID)
+    style.configure("Invalid.TEntry", fieldbackground=PANEL_ALT, foreground=INVALID, insertcolor=INVALID, bordercolor=INVALID)
+    style.configure("Valid.TCombobox", fieldbackground=PANEL_ALT, foreground=VALID, arrowcolor=VALID, bordercolor=VALID)
+    style.configure("Invalid.TCombobox", fieldbackground=PANEL_ALT, foreground=INVALID, arrowcolor=INVALID, bordercolor=INVALID)
+    style.map("Valid.TCombobox", fieldbackground=[("readonly", PANEL_ALT)], foreground=[("readonly", VALID)])
+    style.map("Invalid.TCombobox", fieldbackground=[("readonly", PANEL_ALT)], foreground=[("readonly", INVALID)])
 
 
 def draw_logo(canvas: tk.Canvas) -> None:
