@@ -75,6 +75,7 @@ EV_FIELDS = [("ev_hp", "HP"), ("ev_atk", "Atk"), ("ev_def", "Def"), ("ev_spa", "
 MOVE_KEYS = ["move1", "move2", "move3", "move4"]
 STAT_LABELS = [("HP", 0), ("Atk", 1), ("Def", 2), ("SpA", 3), ("SpD", 4), ("Spe", 5)]
 EV_MAX_TOTAL = 510
+SPRITE_SIZE = 72
 
 SPECIES_SORT_MODES = [("dex", "Dex #"), ("alpha", "A-Z"), ("fillin", "Fill-in Order")]
 MAX_LIST_RESULTS = 300
@@ -138,13 +139,15 @@ class SearchableList(ttk.Frame):
 
     def _select_first(self, _event: tk.Event) -> None:
         if self.listbox.size() == 1 or (self.listbox.size() and self.var.get().strip()):
-            self.var.set(self.listbox.get(0))
+            self.set_value(self.listbox.get(0))
+            if self.on_change is not None:
+                self.on_change()
 
     def _on_listbox_select(self, _event: tk.Event) -> None:
         selection = self.listbox.curselection()
         if not selection:
             return
-        self.var.set(self.listbox.get(selection[0]))
+        self.set_value(self.listbox.get(selection[0]))
         if self.on_change is not None:
             self.on_change()
 
@@ -158,10 +161,19 @@ class SearchableList(ttk.Frame):
     def set_value(self, text: str) -> None:
         """Sets the field text and scrolls the view back to the start, so a
         long value (e.g. '025  Pikachu') shows its number prefix instead of
-        being scrolled to show the tail end."""
+        being scrolled to show the tail end.
+
+        The view reset is deferred with after_idle: calling it synchronously
+        right after var.set() can race Tk's own redraw of the Entry (the
+        widget hasn't resized its scroll region for the new text yet), which
+        made this fix flaky rather than reliably fixing every entry."""
         self.var.set(text)
-        self.entry.icursor(0)
-        self.entry.xview_moveto(0)
+
+        def _reset_view() -> None:
+            self.entry.icursor(0)
+            self.entry.xview_moveto(0)
+
+        self.entry.after_idle(_reset_view)
 
 
 class SpeciesPicker(ttk.Frame):
@@ -395,9 +407,9 @@ class PokeHexApp(tk.Tk):
         top_row = ttk.Frame(right)
         top_row.pack(side="top", fill="x")
 
-        self.sprite_canvas = tk.Canvas(top_row, width=72, height=72, highlightthickness=0)
+        self.sprite_canvas = tk.Canvas(top_row, width=SPRITE_SIZE, height=SPRITE_SIZE, highlightthickness=0)
         self.sprite_canvas.pack(side="left", anchor="n", padx=(0, 10), pady=(4, 0))
-        theme.draw_sprite_placeholder(self.sprite_canvas, size=72)
+        theme.draw_sprite_placeholder(self.sprite_canvas, size=SPRITE_SIZE)
 
         identity_frame = ttk.Labelframe(top_row, text="IDENTITY", padding=6)
         identity_frame.pack(side="left", fill="both", expand=True)
@@ -611,15 +623,15 @@ class PokeHexApp(tk.Tk):
         self._refresh_sprite(pkm.species)
 
     def _refresh_sprite(self, species_number: int) -> None:
-        image = sprites.load_sprite(species_number, size=96) if species_number else None
+        image = sprites.load_sprite(species_number, size=SPRITE_SIZE) if species_number else None
         if image is not None:
             self._sprite_image = image
             self.sprite_canvas.delete("all")
             self.sprite_canvas.configure(bg=theme.PANEL_ALT, highlightthickness=1, highlightbackground=theme.BORDER)
-            self.sprite_canvas.create_image(48, 48, image=image)
+            self.sprite_canvas.create_image(SPRITE_SIZE // 2, SPRITE_SIZE // 2, image=image)
         else:
             self._sprite_image = None
-            theme.draw_sprite_placeholder(self.sprite_canvas)
+            theme.draw_sprite_placeholder(self.sprite_canvas, size=SPRITE_SIZE)
 
     def _load_form_from_pkm(self, pkm: PA9) -> None:
         self.species_picker.set_species_number(pkm.species)
@@ -771,7 +783,7 @@ class PokeHexApp(tk.Tk):
             return
         self.sav.set_box_slot(self.current_box, self.current_slot, PA9())
         self.refresh_slot_list()
-        theme.draw_sprite_placeholder(self.sprite_canvas)
+        theme.draw_sprite_placeholder(self.sprite_canvas, size=SPRITE_SIZE)
         self.status_var.set(f"Cleared Box {self.current_box + 1} Slot {self.current_slot + 1}")
 
 
