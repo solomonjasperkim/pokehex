@@ -10,10 +10,11 @@ party-format PA9 entry.
 from __future__ import annotations
 
 from . import swishcrypto
-from .pa9 import SIZE_PARTY, PA9
+from .pa9 import SIZE_PARTY, PA9, _get_string
 
 KEY_BOX = 0x0D66012C
 KEY_SAVE_REVISION = 0x0926555A  # 0 = Base, 1 = Mega Dimension, 2 = End of Life
+KEY_MY_STATUS = 0xE3E89BD1  # your own trainer's data (MyStatus9a)
 
 BOX_COUNT = 32
 SLOTS_PER_BOX = 30
@@ -49,6 +50,27 @@ class SAV9ZA:
         if block is None or len(block.data) < 8:
             return 0
         return int.from_bytes(block.data[:8], "little")
+
+    @property
+    def trainer_tid16(self) -> int:
+        block = self._by_key.get(KEY_MY_STATUS)
+        if block is None or len(block.data) < 2:
+            return 0
+        return int.from_bytes(block.data[0:2], "little")
+
+    @property
+    def trainer_sid16(self) -> int:
+        block = self._by_key.get(KEY_MY_STATUS)
+        if block is None or len(block.data) < 4:
+            return 0
+        return int.from_bytes(block.data[2:4], "little")
+
+    @property
+    def trainer_ot_name(self) -> str:
+        block = self._by_key.get(KEY_MY_STATUS)
+        if block is None or len(block.data) < 0x2A:
+            return ""
+        return _get_string(block.data[0x10:0x2A])
 
     def _slot_offset(self, box: int, slot: int) -> int:
         if not 0 <= box < BOX_COUNT:

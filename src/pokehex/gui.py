@@ -649,7 +649,9 @@ class PokeHexApp(tk.Tk):
             return
         self.save_path = path
         self.current_slot = None
-        self.status_var.set(f"Loaded {path}")
+        ot = self.sav.trainer_ot_name
+        trainer_note = f" -- Trainer: {ot} (TID {self.sav.trainer_tid16} / SID {self.sav.trainer_sid16})" if ot else ""
+        self.status_var.set(f"Loaded {path}{trainer_note}")
         self.refresh_slot_list()
 
     def save_in_place(self) -> None:
@@ -746,7 +748,9 @@ class PokeHexApp(tk.Tk):
 
     def fill_smart_defaults(self) -> None:
         """Fills the form with sensible, legally-shaped values you can then
-        customize -- doesn't touch species/ability/moves, so you still choose those."""
+        customize -- doesn't touch species/ability/moves, so you still choose those.
+        If a save is loaded, TID/SID/OT are pulled from your own trainer data
+        so the Pokemon shows as originally yours instead of TID/SID 0."""
         self.fields["form"].set("0")
         self.fields["level"].set("50")
         self.nature_picker.set_id(0)  # Hardy
@@ -757,7 +761,16 @@ class PokeHexApp(tk.Tk):
             self.fields[key].set("31")
         for key, _ in EV_FIELDS:
             self.fields[key].set("0")
-        self.status_var.set("Smart defaults filled in -- pick a species, ability, and moves, then customize as needed.")
+
+        trainer_note = ""
+        if self.sav is not None and self.sav.trainer_ot_name:
+            self.fields["tid16"].set(str(self.sav.trainer_tid16))
+            self.fields["sid16"].set(str(self.sav.trainer_sid16))
+            self.fields["original_trainer_name"].set(self.sav.trainer_ot_name)
+            trainer_note = f" TID/SID/OT filled in as yours ({self.sav.trainer_ot_name})."
+        self.status_var.set(
+            f"Smart defaults filled in -- pick a species, ability, and moves, then customize as needed.{trainer_note}"
+        )
 
     def _build_pkm_from_form(self, pkm: PA9) -> PA9:
         if pkm.pid == 0:
