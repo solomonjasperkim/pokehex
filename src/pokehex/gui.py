@@ -13,11 +13,11 @@ import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 
 from . import sprites, theme
+from .za import species
 from .za.pa9 import PA9
 from .za.save import BOX_COUNT, SLOTS_PER_BOX, SAV9ZA
 
 IDENTITY_FIELDS: list[tuple[str, str, bool]] = [
-    ("species", "Species (Dex #)", False),
     ("form", "Form", False),
     ("level", "Level", False),
     ("nickname", "Nickname", True),
@@ -35,6 +35,44 @@ IDENTITY_FIELDS: list[tuple[str, str, bool]] = [
 IV_FIELDS = [("iv_hp", "HP"), ("iv_atk", "Atk"), ("iv_def", "Def"), ("iv_spa", "SpA"), ("iv_spd", "SpD"), ("iv_spe", "Spe")]
 EV_FIELDS = [("ev_hp", "HP"), ("ev_atk", "Atk"), ("ev_def", "Def"), ("ev_spa", "SpA"), ("ev_spd", "SpD"), ("ev_spe", "Spe")]
 MOVE_FIELDS = [("move1", "Move 1"), ("move2", "Move 2"), ("move3", "Move 3"), ("move4", "Move 4")]
+
+_ALL_SPECIES_OPTIONS = species.display_options()
+
+
+class SpeciesPicker(ttk.Frame):
+    """A searchable dropdown over the ~232 species available in Legends Z-A.
+    Type to filter by name; you can also type a bare National Dex number
+    directly (accepted even if it's not in the Z-A list, since there's no
+    legality checker here -- that's on you)."""
+
+    def __init__(self, parent: tk.Widget) -> None:
+        super().__init__(parent)
+        self.var = tk.StringVar()
+        self.combo = ttk.Combobox(self, textvariable=self.var, values=_ALL_SPECIES_OPTIONS, width=22)
+        self.combo.pack()
+        self.combo.bind("<KeyRelease>", self._on_keyrelease)
+
+    def _on_keyrelease(self, event: tk.Event) -> None:
+        if event.keysym in ("Up", "Down", "Return", "Escape", "Tab"):
+            return
+        typed = self.var.get().strip().lower()
+        if not typed:
+            self.combo["values"] = _ALL_SPECIES_OPTIONS
+        else:
+            self.combo["values"] = [o for o in _ALL_SPECIES_OPTIONS if typed in o.lower()]
+
+    def get_species_number(self) -> int:
+        return species.parse_selection(self.var.get())
+
+    def set_species_number(self, number: int) -> None:
+        if not number:
+            self.var.set("")
+            return
+        name = species.name_for(number)
+        if name:
+            self.var.set(f"{number:03d}  {name}")
+        else:
+            self.var.set(f"{number:03d}  (not in Z-A list)")
 
 
 class PokeHexApp(tk.Tk):
@@ -109,7 +147,12 @@ class PokeHexApp(tk.Tk):
 
         identity_frame = ttk.Labelframe(top_row, text="IDENTITY", padding=8)
         identity_frame.pack(side="left", fill="both", expand=True)
-        self._build_field_grid(identity_frame, IDENTITY_FIELDS)
+
+        ttk.Label(identity_frame, text="Species").grid(row=0, column=0, sticky="w", padx=(0, 4), pady=2)
+        self.species_picker = SpeciesPicker(identity_frame)
+        self.species_picker.grid(row=0, column=1, sticky="w", padx=(0, 16), pady=2)
+
+        self._build_field_grid(identity_frame, IDENTITY_FIELDS, start_row=1)
 
         mid_row = ttk.Frame(right)
         mid_row.pack(side="top", fill="x", pady=8)
@@ -139,9 +182,10 @@ class PokeHexApp(tk.Tk):
         )
         status_bar.pack(side="bottom", fill="x")
 
-    def _build_field_grid(self, parent: ttk.Frame, specs: list[tuple[str, str, bool]]) -> None:
+    def _build_field_grid(self, parent: ttk.Frame, specs: list[tuple[str, str, bool]], start_row: int = 0) -> None:
         for i, (key, label, is_str) in enumerate(specs):
             row, col = divmod(i, 2)
+            row += start_row
             ttk.Label(parent, text=label).grid(row=row, column=col * 2, sticky="w", padx=(0, 4), pady=2)
             var: tk.Variable = tk.StringVar() if is_str else tk.IntVar(value=0)
             ttk.Entry(parent, textvariable=var, width=14).grid(row=row, column=col * 2 + 1, sticky="w", padx=(0, 16), pady=2)
@@ -215,7 +259,8 @@ class PokeHexApp(tk.Tk):
                 self.slot_list.insert("end", f"{slot + 1:02d}  -- empty --")
             else:
                 pkm = self.sav.get_box_slot(self.current_box, slot)
-                self.slot_list.insert("end", f"{slot + 1:02d}  Dex #{pkm.species:<4} Lv.{pkm.stat_level}")
+                name = species.name_for(pkm.species) or f"Dex #{pkm.species}"
+                self.slot_list.insert("end", f"{slot + 1:02d}  {name:<12} Lv.{pkm.stat_level}")
 
     def on_slot_select(self, _event: object) -> None:
         selection = self.slot_list.curselection()
@@ -238,7 +283,7 @@ class PokeHexApp(tk.Tk):
             theme.draw_sprite_placeholder(self.sprite_canvas)
 
     def _load_form_from_pkm(self, pkm: PA9) -> None:
-        self.fields["species"].set(pkm.species)
+        self.species_picker.set_species_number(pkm.species)
         self.fields["form"].set(pkm.form)
         self.fields["level"].set(pkm.stat_level)
         self.fields["nickname"].set(pkm.nickname)
@@ -274,7 +319,7 @@ class PokeHexApp(tk.Tk):
         if pkm.encryption_constant == 0:
             pkm.encryption_constant = random.getrandbits(32)
 
-        pkm.species = self.fields["species"].get()
+        pkm.species = self.species_picker.get_species_number()
         pkm.form = self.fields["form"].get()
         level = max(1, min(100, self.fields["level"].get()))
         pkm.stat_level = level
@@ -324,9 +369,10 @@ class PokeHexApp(tk.Tk):
         self.sav.set_box_slot(self.current_box, self.current_slot, pkm)
         self.refresh_slot_list()
         self._refresh_sprite(pkm.species)
+        warning = "" if species.name_for(pkm.species) else "  [!] species not in the Z-A list -- verify it in-game"
         self.status_var.set(
             f"Applied to Box {self.current_box + 1} Slot {self.current_slot + 1} "
-            "(not written to disk yet -- use File > Save)"
+            f"(not written to disk yet -- use File > Save){warning}"
         )
 
     def make_shiny(self) -> None:
