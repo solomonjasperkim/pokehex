@@ -351,7 +351,7 @@ class NaturePicker(NameIdPicker):
     list, not a range-only check."""
 
     def __init__(self, parent: tk.Widget) -> None:
-        super().__init__(parent, stats_mod, pad=2, width=12, list_height=3)
+        super().__init__(parent, stats_mod, pad=2, width=16, list_height=4)
 
     def set_id(self, value: int) -> None:
         # Unlike species/move/ability/ball/item, 0 is a real nature (Hardy),
@@ -369,7 +369,7 @@ class BallPicker(NameIdPicker):
     guessing one."""
 
     def __init__(self, parent: tk.Widget) -> None:
-        super().__init__(parent, balls_mod, pad=4, width=14, list_height=3)
+        super().__init__(parent, balls_mod, pad=4, width=20, list_height=4)
 
 
 class HeldItemPicker(NameIdPicker):
@@ -378,7 +378,7 @@ class HeldItemPicker(NameIdPicker):
     real item name, not that it's a legal/sensible held item here."""
 
     def __init__(self, parent: tk.Widget) -> None:
-        super().__init__(parent, items_mod, pad=4, width=15, list_height=3)
+        super().__init__(parent, items_mod, pad=4, width=22, list_height=4)
 
 
 class PokeHexApp(tk.Tk):
@@ -478,65 +478,65 @@ class PokeHexApp(tk.Tk):
         self.sprite_canvas.pack(side="left", anchor="n", padx=(0, 10), pady=(4, 0))
         theme.draw_sprite_placeholder(self.sprite_canvas, size=SPRITE_SIZE)
 
-        identity_frame = ttk.Labelframe(top_row, text="IDENTITY", padding=6)
+        identity_frame = ttk.Labelframe(top_row, text="IDENTITY", padding=10)
         identity_frame.pack(side="left", fill="both", expand=True)
 
-        ttk.Label(identity_frame, text="Species").grid(row=0, column=0, sticky="nw", padx=(0, 4), pady=1)
+        ttk.Label(identity_frame, text="Species").grid(row=0, column=0, sticky="nw", padx=(0, 6), pady=6)
         self.species_picker = SpeciesPicker(identity_frame, on_change=self._on_species_changed)
-        self.species_picker.grid(row=0, column=1, columnspan=3, sticky="w", padx=(0, 12), pady=1)
+        self.species_picker.grid(row=0, column=1, columnspan=3, sticky="w", padx=(0, 24), pady=6)
 
-        ttk.Label(identity_frame, text="Ability").grid(row=0, column=4, sticky="nw", padx=(0, 4), pady=1)
+        ttk.Label(identity_frame, text="Ability").grid(row=0, column=4, sticky="nw", padx=(0, 6), pady=6)
         self.ability_picker = AbilityPicker(identity_frame)
-        self.ability_picker.grid(row=0, column=5, sticky="w", pady=1)
+        self.ability_picker.grid(row=0, column=5, sticky="w", pady=6)
         self.ability_picker.refresh_for_species(0)
 
-        ttk.Label(identity_frame, text="Nature").grid(row=1, column=0, sticky="nw", padx=(0, 4), pady=1)
+        ttk.Label(identity_frame, text="Nature").grid(row=1, column=0, sticky="nw", padx=(0, 6), pady=6)
         self.nature_picker = NaturePicker(identity_frame)
-        self.nature_picker.grid(row=1, column=1, sticky="w", padx=(0, 12), pady=1)
+        self.nature_picker.grid(row=1, column=1, sticky="w", padx=(0, 24), pady=6)
         self.nature_picker.picker.var.trace_add("write", self._on_stat_input_changed)
 
-        ttk.Label(identity_frame, text="Ball").grid(row=1, column=2, sticky="nw", padx=(0, 4), pady=1)
+        ttk.Label(identity_frame, text="Ball").grid(row=1, column=2, sticky="nw", padx=(0, 6), pady=6)
         self.ball_picker = BallPicker(identity_frame)
-        self.ball_picker.grid(row=1, column=3, sticky="w", padx=(0, 12), pady=1)
+        self.ball_picker.grid(row=1, column=3, sticky="w", padx=(0, 24), pady=6)
 
-        ttk.Label(identity_frame, text="Held Item").grid(row=1, column=4, sticky="nw", padx=(0, 4), pady=1)
+        ttk.Label(identity_frame, text="Held Item").grid(row=1, column=4, sticky="nw", padx=(0, 6), pady=6)
         self.held_item_picker = HeldItemPicker(identity_frame)
-        self.held_item_picker.grid(row=1, column=5, sticky="w", pady=1)
+        self.held_item_picker.grid(row=1, column=5, sticky="w", pady=6)
 
         self._build_field_grid(identity_frame, IDENTITY_FIELDS, start_row=2, columns=3)
 
         mid_row = ttk.Frame(right)
-        mid_row.pack(side="top", fill="x", pady=6)
+        mid_row.pack(side="top", fill="x", pady=10)
 
-        iv_frame = ttk.Labelframe(mid_row, text="IVs (0-31)", padding=6)
-        iv_frame.pack(side="left", fill="both", expand=True, padx=(0, 4))
+        iv_frame = ttk.Labelframe(mid_row, text="IVs (0-31)", padding=10)
+        iv_frame.pack(side="left", fill="both", expand=True, padx=(0, 8))
         self._build_stat_row(iv_frame, IV_FIELDS, _range_check(0, 31))
 
-        ev_frame = ttk.Labelframe(mid_row, text="EVs (0-252 each)", padding=6)
-        ev_frame.pack(side="left", fill="both", expand=True, padx=4)
+        ev_frame = ttk.Labelframe(mid_row, text="EVs (0-252 each)", padding=10)
+        ev_frame.pack(side="left", fill="both", expand=True, padx=8)
         self._build_stat_row(ev_frame, EV_FIELDS, _range_check(0, 252))
         self.ev_total_var = tk.StringVar(value=f"Total: 0/{EV_MAX_TOTAL}")
         self.ev_total_label = ttk.Label(ev_frame, textvariable=self.ev_total_var)
-        self.ev_total_label.grid(row=2, column=0, columnspan=len(EV_FIELDS), sticky="w", pady=(2, 0))
+        self.ev_total_label.grid(row=2, column=0, columnspan=len(EV_FIELDS), sticky="w", pady=(6, 0))
 
-        stats_frame = ttk.Labelframe(mid_row, text="STATS (live)", padding=6)
-        stats_frame.pack(side="left", fill="both", expand=True, padx=(4, 0))
+        stats_frame = ttk.Labelframe(mid_row, text="STATS (live)", padding=10)
+        stats_frame.pack(side="left", fill="both", expand=True, padx=(8, 0))
         for col, (label, _idx) in enumerate(STAT_LABELS):
             r, c = divmod(col, 3)
-            ttk.Label(stats_frame, text=label).grid(row=r * 2, column=c, padx=6)
+            ttk.Label(stats_frame, text=label).grid(row=r * 2, column=c, padx=10, pady=(0, 2))
             var = tk.StringVar(value="--")
             self.stat_vars[label] = var
-            ttk.Label(stats_frame, textvariable=var, style="Header.TLabel").grid(row=r * 2 + 1, column=c, padx=6)
+            ttk.Label(stats_frame, textvariable=var, style="Header.TLabel").grid(row=r * 2 + 1, column=c, padx=10, pady=(0, 6))
 
         for key, _ in IV_FIELDS + EV_FIELDS:
             self.fields[key].trace_add("write", self._on_stat_input_changed)
 
-        move_frame = ttk.Labelframe(right, text="MOVES (real move names -- not filtered to this species' learnset)", padding=6)
-        move_frame.pack(side="top", fill="x", pady=(0, 6))
+        move_frame = ttk.Labelframe(right, text="MOVES (real move names -- not filtered to this species' learnset)", padding=10)
+        move_frame.pack(side="top", fill="x", pady=(0, 10))
         for i, key in enumerate(MOVE_KEYS):
-            ttk.Label(move_frame, text=f"Move {i + 1}").grid(row=0, column=i, padx=6)
+            ttk.Label(move_frame, text=f"Move {i + 1}").grid(row=0, column=i, padx=14, pady=(0, 4))
             picker = MovePicker(move_frame)
-            picker.grid(row=1, column=i, padx=6)
+            picker.grid(row=1, column=i, padx=14)
             self.move_pickers.append(picker)
 
         btn_frame = ttk.Frame(right)
@@ -579,21 +579,21 @@ class PokeHexApp(tk.Tk):
         for i, (key, label, is_str, validator) in enumerate(specs):
             row, col = divmod(i, columns)
             row += start_row
-            ttk.Label(parent, text=label).grid(row=row, column=col * 2, sticky="w", padx=(0, 3), pady=1)
+            ttk.Label(parent, text=label).grid(row=row, column=col * 2, sticky="w", padx=(0, 6), pady=5)
             var: tk.Variable = tk.StringVar(value="") if is_str else tk.StringVar(value="0")
             self.fields[key] = var
             self._make_entry(parent, key, var, validator, width=10).grid(
-                row=row, column=col * 2 + 1, sticky="w", padx=(0, 10), pady=1,
+                row=row, column=col * 2 + 1, sticky="w", padx=(0, 20), pady=5,
             )
             if key in ("level", "nature"):
                 var.trace_add("write", self._on_stat_input_changed)
 
     def _build_stat_row(self, parent: ttk.Frame, specs: list[tuple[str, str]], validator: Validator) -> None:
         for i, (key, label) in enumerate(specs):
-            ttk.Label(parent, text=label).grid(row=0, column=i, padx=4)
+            ttk.Label(parent, text=label).grid(row=0, column=i, padx=8, pady=(0, 2))
             var = tk.StringVar(value="0")
             self.fields[key] = var
-            self._make_entry(parent, key, var, validator, width=5).grid(row=1, column=i, padx=4)
+            self._make_entry(parent, key, var, validator, width=5).grid(row=1, column=i, padx=8, pady=(0, 4))
 
     def _on_species_changed(self) -> None:
         species_number = self.species_picker.get_species_number()
