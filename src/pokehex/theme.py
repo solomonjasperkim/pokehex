@@ -125,6 +125,18 @@ def apply(root: tk.Tk) -> None:
     )
     style.map("ToggleOn.TButton", background=[("active", ACCENT_DIM)], foreground=[("active", BG)])
 
+    # Results list for SearchableList (species/move/ability pickers).
+    style.configure(
+        "Results.Treeview", background=PANEL_ALT, fieldbackground=PANEL_ALT, foreground=FG,
+        font=FONT_MONO, borderwidth=2, relief="sunken", rowheight=20,
+    )
+    style.map(
+        "Results.Treeview",
+        background=[("selected", ACCENT_DIM)],
+        foreground=[("selected", BG)],
+    )
+    style.layout("Results.Treeview", [("Treeview.treearea", {"sticky": "nswe"})])
+
 
 def draw_logo(canvas: tk.Canvas) -> None:
     """Original PokeHex mark: a hexagon outline (nod to 'hex' editing) with

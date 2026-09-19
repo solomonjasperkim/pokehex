@@ -89,7 +89,13 @@ def _get_int(var: tk.StringVar, default: int = 0) -> int:
 class SearchableList(ttk.Frame):
     """A search box with an always-visible, live-filtered results list below
     it -- click or arrow-down-then-Enter to pick. Avoids ttk.Combobox's
-    popdown, which is slow/fiddly to use on macOS."""
+    popdown, which is slow/fiddly to use on macOS.
+
+    Uses ttk.Treeview (not tk.Listbox) for the results: on this build's Tk
+    9.0, a plain Listbox was found to render scrolled-into-view rows with
+    their leading text missing (reproducibly: any row not at the very top
+    of the list) -- a real Tk/Aqua rendering bug on this fresh Tk version,
+    not a data issue. Treeview doesn't exhibit it."""
 
     def __init__(
         self, parent: tk.Widget, options: list[str], width: int = 26,
@@ -102,25 +108,25 @@ class SearchableList(ttk.Frame):
 
         self.entry = ttk.Entry(self, textvariable=self.var, width=width, style="Valid.TEntry")
         self.entry.grid(row=0, column=0, sticky="ew")
-        self.listbox = tk.Listbox(
-            self, height=list_height, width=width, font=theme.FONT_MONO,
-            bg=theme.PANEL_ALT, fg=theme.FG, selectbackground=theme.ACCENT_DIM,
-            selectforeground=theme.BG, highlightthickness=2, highlightbackground=theme.BORDER,
-            relief="sunken", borderwidth=2, exportselection=False,
+
+        self.tree = ttk.Treeview(
+            self, columns=("value",), show="", height=list_height,
+            selectmode="browse", style="Results.Treeview",
         )
-        self.listbox.grid(row=1, column=0, sticky="ew")
+        self.tree.column("value", width=width * 7, stretch=True, anchor="w")
+        self.tree.grid(row=1, column=0, sticky="ew")
 
         self._refresh_list(options)
         self.entry.bind("<KeyRelease>", self._on_key)
         self.entry.bind("<Down>", self._move_to_list)
         self.entry.bind("<Return>", self._select_first)
-        self.listbox.bind("<<ListboxSelect>>", self._on_listbox_select)
-        self.listbox.bind("<Return>", self._on_listbox_select)
+        self.tree.bind("<<TreeviewSelect>>", self._on_tree_select)
+        self.tree.bind("<Return>", self._on_tree_select)
 
     def _refresh_list(self, options: list[str]) -> None:
-        self.listbox.delete(0, "end")
+        self.tree.delete(*self.tree.get_children())
         for option in options[:MAX_LIST_RESULTS]:
-            self.listbox.insert("end", option)
+            self.tree.insert("", "end", values=(option,))
 
     def _on_key(self, event: tk.Event) -> None:
         if event.keysym in ("Down", "Up", "Return", "Escape", "Tab"):
@@ -130,24 +136,34 @@ class SearchableList(ttk.Frame):
         self._refresh_list(filtered)
 
     def _move_to_list(self, _event: tk.Event) -> str:
-        if self.listbox.size():
-            self.listbox.focus_set()
-            self.listbox.selection_clear(0, "end")
-            self.listbox.selection_set(0)
-            self.listbox.activate(0)
+        children = self.tree.get_children()
+        if children:
+            self.tree.focus_set()
+            self.tree.selection_set(children[0])
+            self.tree.focus(children[0])
+            self.tree.see(children[0])
         return "break"
 
+    def _first_value(self) -> str | None:
+        children = self.tree.get_children()
+        if not children:
+            return None
+        return self.tree.item(children[0], "values")[0]
+
     def _select_first(self, _event: tk.Event) -> None:
-        if self.listbox.size() == 1 or (self.listbox.size() and self.var.get().strip()):
-            self.set_value(self.listbox.get(0))
+        children = self.tree.get_children()
+        value = self._first_value()
+        if value is not None and (len(children) == 1 or self.var.get().strip()):
+            self.set_value(value)
             if self.on_change is not None:
                 self.on_change()
 
-    def _on_listbox_select(self, _event: tk.Event) -> None:
-        selection = self.listbox.curselection()
+    def _on_tree_select(self, _event: tk.Event) -> None:
+        selection = self.tree.selection()
         if not selection:
             return
-        self.set_value(self.listbox.get(selection[0]))
+        text = self.tree.item(selection[0], "values")[0]
+        self.set_value(text)
         if self.on_change is not None:
             self.on_change()
 
